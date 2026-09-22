@@ -15,11 +15,17 @@ public sealed class AudioEngine : IDisposable
 {
     private WaveOutEvent? _output;
     private WaveStream? _reader;              // MediaFoundationReader or WaveFileReader
-    private ISampleProvider? _sampleSource;   // float provider (seekable wrapper below)
+    private ISampleProvider? _sampleSource;   // active source: forward reader adapter or reverse buffer
+    private ReverseSampleProvider? _reverse;  // active only in reverse mode
+    private float[]? _reverseData;            // decoded file cache (per loaded file)
+    private WaveFormat? _reverseFormat;
     private SoundTouchSampleProvider? _processor;
     private EqualizerSampleProvider? _eq;
     private ISampleProvider? _volumeProvider;
     private bool _disposed;
+
+    /// <summary>When true, playback runs backwards from the current position.</summary>
+    public bool Reverse { get; private set; }
 
     // EQ settings persist across file loads.
     private readonly float[] _eqGains = new float[GraphicEqualizer.BandCount];
@@ -121,11 +127,23 @@ public sealed class AudioEngine : IDisposable
     /// <summary>Current source position.</summary>
     public TimeSpan SourcePosition
     {
-        get => _reader?.CurrentTime ?? TimeSpan.Zero;
+        get
+        {
+            if (Reverse && _reverse != null)
+                return TimeSpan.FromSeconds((double)_reverse.PositionFrames / _reverse.WaveFormat.SampleRate);
+            return _reader?.CurrentTime ?? TimeSpan.Zero;
+        }
         set
         {
-            if (_reader == null) return;
             value = Clamp(value, TimeSpan.Zero, SourceDuration);
+            if (Reverse)
+            {
+                if (_reverse == null) return;
+                _reverse.PositionFrames = (long)(value.TotalSeconds * _reverse.WaveFormat.SampleRate);
+                _processor?.ClearBuffer();
+                return;
+            }
+            if (_reader == null) return;
             _reader.CurrentTime = value;
             _processor?.ClearBuffer();
         }
@@ -162,21 +180,109 @@ public sealed class AudioEngine : IDisposable
         Unload();
 
         _reader = CreateReader(path);
-        var sample = _reader.ToSampleProvider(); // 32-bit float, keeps source WaveFormat channels/rate
-        _sampleSource = sample;
-        _processor = new SoundTouchSampleProvider(sample);
+        BuildOutputChain(_reader.ToSampleProvider());
+
+        FilePath = path;
+        LoopA = LoopB = null;
+        LoopEnabled = false;
+    }
+
+    /// <summary>
+    /// (Re)builds the processing chain (SoundTouch tempo/pitch + EQ + volume + output)
+    /// around the given source, preserving tempo, pitch, EQ, and device volume.
+    /// </summary>
+    private void BuildOutputChain(ISampleProvider source)
+    {
+        double tempo = Tempo;
+        double pitch = PitchSemitones;
+        float deviceVolume = 1f;
+
+        if (_output != null)
+        {
+            try { deviceVolume = _output.Volume; } catch { /* ignore */ }
+            _output.PlaybackStopped -= OnPlaybackStopped;
+            try { _output.Stop(); } catch { /* ignore */ }
+            _output.Dispose();
+            _output = null;
+        }
+
+        _sampleSource = source;
+        _processor = new SoundTouchSampleProvider(source)
+        {
+            Tempo = tempo,
+            PitchSemitones = pitch
+        };
         _eq = new EqualizerSampleProvider(_processor);
         _eq.Equalizer.SetGains(_eqGains);
         _eq.Enabled = EqEnabled;
         _volumeProvider = new VolumeSampleProvider(_eq) { Volume = 1f };
 
         _output = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 3 };
+        try { _output.Volume = deviceVolume; } catch { /* ignore */ }
         _output.Init(_volumeProvider);
         _output.PlaybackStopped += OnPlaybackStopped;
+    }
 
-        FilePath = path;
-        LoopA = LoopB = null;
-        LoopEnabled = false;
+    /// <summary>
+    /// Toggles backwards playback. Position is preserved (direction flips at the same
+    /// point in the song); tempo, pitch, EQ, and volume carry over. Decoding the file
+    /// into memory happens once per loaded file.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No file loaded, or file too long to reverse.</exception>
+    public void SetReverse(bool reverse)
+    {
+        if (!IsLoaded || FilePath == null) throw new InvalidOperationException("No file loaded.");
+        if (reverse == Reverse) return;
+
+        TimeSpan pos = SourcePosition;
+        bool wasPlaying = IsPlaying;
+
+        if (reverse)
+        {
+            EnsureReverseData(FilePath);
+            _reverse = new ReverseSampleProvider(_reverseData!, _reverseFormat!);
+            Reverse = true;
+            BuildOutputChain(_reverse);
+        }
+        else
+        {
+            Reverse = false;
+            _reverse = null;
+            if (_reader == null) throw new InvalidOperationException("No file loaded.");
+            BuildOutputChain(_reader.ToSampleProvider());
+        }
+
+        SourcePosition = pos;
+        if (wasPlaying) Play();
+    }
+
+    /// <summary>Decodes the whole file to 32-bit float (cached per loaded file).</summary>
+    private void EnsureReverseData(string path)
+    {
+        if (_reverseData != null && _reverseFormat != null) return;
+
+        using var reader = CreateReader(path);
+        var sample = reader.ToSampleProvider();
+        int channels = sample.WaveFormat.Channels;
+        const long maxFloats = 134_217_728; // 512 MB cap (~24 min of CD-quality stereo)
+
+        var data = new List<float>();
+        float[] buf = new float[8192 * channels];
+        long total = 0;
+        int read;
+        while ((read = sample.Read(buf, 0, buf.Length)) > 0)
+        {
+            if (total + read > maxFloats)
+                throw new InvalidOperationException(
+                    "This file is too long to play in reverse (over ~24 min at CD quality).");
+            float[] chunk = new float[read];
+            Array.Copy(buf, chunk, read);
+            data.AddRange(chunk);
+            total += read;
+        }
+
+        _reverseData = data.ToArray();
+        _reverseFormat = sample.WaveFormat;
     }
 
     public void Unload()
@@ -192,6 +298,10 @@ public sealed class AudioEngine : IDisposable
         _volumeProvider = null;
         _eq = null;
         _sampleSource = null;
+        _reverse = null;
+        _reverseData = null;
+        _reverseFormat = null;
+        Reverse = false;
         _reader?.Dispose();
         _reader = null;
         FilePath = null;
@@ -199,7 +309,14 @@ public sealed class AudioEngine : IDisposable
         LoopEnabled = false;
     }
 
-    public void Play() => _output?.Play();
+    public void Play()
+    {
+        if (_output == null) return;
+        // In reverse, position 0 means "already played to the start" — restart from the end.
+        if (Reverse && SourcePosition <= TimeSpan.Zero && SourceDuration > TimeSpan.Zero)
+            SourcePosition = SourceDuration;
+        _output.Play();
+    }
 
     public void Pause()
     {
@@ -222,8 +339,10 @@ public sealed class AudioEngine : IDisposable
 
         if (LoopEnabled && LoopA.HasValue && LoopB.HasValue && LoopB > LoopA)
         {
-            if (SourcePosition >= LoopB.Value)
+            if (!Reverse && SourcePosition >= LoopB.Value)
                 SourcePosition = LoopA.Value;
+            else if (Reverse && SourcePosition <= LoopA.Value)
+                SourcePosition = LoopB.Value;
         }
     }
 
@@ -323,16 +442,16 @@ public sealed class AudioEngine : IDisposable
     {
         // Natural end: WaveOut stops when provider returns 0.
         PlaybackStopped?.Invoke(sender, e);
-        if (_reader != null && _processor != null)
+        // If source exhausted (not a user pause), notify.
+        try
         {
-            // If source exhausted (not a user pause), notify.
-            try
-            {
-                if (_reader.Position >= _reader.Length - 1)
-                    PlaybackEnded?.Invoke(this, EventArgs.Empty);
-            }
-            catch { /* ignore */ }
+            bool ended = Reverse
+                ? SourcePosition <= TimeSpan.FromMilliseconds(250)
+                : _reader != null && _processor != null && _reader.Position >= _reader.Length - 1;
+            if (ended)
+                PlaybackEnded?.Invoke(this, EventArgs.Empty);
         }
+        catch { /* ignore */ }
     }
 
     private static TimeSpan Clamp(TimeSpan v, TimeSpan min, TimeSpan max) =>

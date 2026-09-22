@@ -69,6 +69,8 @@
             <Button x:Name="PlayButton" Content="▶ Play" Click="PlayButton_Click" IsEnabled="False"
                     FontSize="14" Padding="20,8" Background="#2E7D32" BorderBrush="#2E7D32"/>
             <Button x:Name="StopButton" Content="⏹ Stop" Click="StopButton_Click" IsEnabled="False" FontSize="14" Padding="20,8"/>
+            <Button x:Name="ReverseButton" Content="⏪ Reverse" Click="ReverseButton_Click" IsEnabled="False"
+                    FontSize="14" Padding="20,8" ToolTip="Play backwards from the current position"/>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
                 <TextBlock Text="🔊" VerticalAlignment="Center"/>
                 <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" Width="120"

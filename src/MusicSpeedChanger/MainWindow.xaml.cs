@@ -17,6 +17,8 @@ public partial class MainWindow : Window
 {
     private readonly AudioEngine _engine = new();
     private readonly DispatcherTimer _timer;
+    private readonly Brush _reverseActiveBackground = new SolidColorBrush(Color.FromRgb(0x6A, 0x3F, 0xB5));
+    private Brush _reverseIdleBackground = Brushes.Transparent;
     private bool _seekDragging;
     private bool _updatingSeek;
     private bool _exporting;
@@ -42,6 +44,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _reverseIdleBackground = ReverseButton.Background;
         BuildEqUi();
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _timer.Tick += (_, _) => RefreshPosition();
@@ -92,6 +95,7 @@ public partial class MainWindow : Window
             UpdateTransportState();
             RefreshPosition();
             UpdateEffectiveLabel();
+            UpdateReverseUi();
 
             // Build waveform in background
             string copy = path;
@@ -130,6 +134,38 @@ public partial class MainWindow : Window
         _engine.Stop();
         PlayButton.Content = "▶ Play";
         RefreshPosition();
+    }
+
+    private async void ReverseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_engine.IsLoaded) return;
+        ReverseButton.IsEnabled = false;
+        try
+        {
+            bool target = !_engine.Reverse;
+            if (target) StatusLabel.Text = "Preparing reverse…";
+            await Task.Run(() => _engine.SetReverse(target));
+            StatusLabel.Text = "";
+            RefreshPosition();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not enable reverse:\n{ex.Message}", "Music Speed Changer",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusLabel.Text = "Reverse failed";
+        }
+        finally
+        {
+            ReverseButton.IsEnabled = _engine.IsLoaded;
+            UpdateReverseUi();
+        }
+    }
+
+    private void UpdateReverseUi()
+    {
+        bool on = _engine.IsLoaded && _engine.Reverse;
+        ReverseButton.Content = on ? "➡ Forward" : "⏪ Reverse";
+        ReverseButton.Background = on ? _reverseActiveBackground : _reverseIdleBackground;
     }
 
     private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e) =>
@@ -186,6 +222,8 @@ public partial class MainWindow : Window
 
     private void TempoSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        // Fires during InitializeComponent before TempoLabel exists.
+        if (TempoLabel == null) return;
         TempoLabel.Text = $"{e.NewValue:0}%";
         _engine.Tempo = e.NewValue / 100.0;
         UpdateEffectiveLabel();
@@ -201,6 +239,8 @@ public partial class MainWindow : Window
 
     private void PitchSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        // Fires during InitializeComponent before PitchLabel exists.
+        if (PitchLabel == null) return;
         PitchLabel.Text = $"{(e.NewValue >= 0 ? "+" : "")}{e.NewValue:0.0} st";
         _engine.PitchSemitones = e.NewValue;
     }
@@ -215,6 +255,7 @@ public partial class MainWindow : Window
 
     private void UpdateEffectiveLabel()
     {
+        if (EffectiveTimeLabel == null) return;
         if (!_engine.IsLoaded) { EffectiveTimeLabel.Text = ""; return; }
         EffectiveTimeLabel.Text = $"plays as {FormatTime(_engine.OutputDuration)} @ {TempoSlider.Value:0}%";
     }
@@ -287,7 +328,6 @@ public partial class MainWindow : Window
     {
         foreach (var name in EqPresets.Keys)
             EqPresetBox.Items.Add(name);
-        EqPresetBox.SelectedIndex = 0; // Flat
 
         for (int band = 0; band < GraphicEqualizer.BandCount; band++)
         {
@@ -323,6 +363,10 @@ public partial class MainWindow : Window
             col.Children.Add(label);
             EqBandsPanel.Children.Add(col);
         }
+
+        // Select Flat preset last: SelectionChanged applies gains to the sliders,
+        // which must exist first.
+        EqPresetBox.SelectedIndex = 0; // Flat
     }
 
     private static string EqTip(float freq, double gain) =>
@@ -360,7 +404,9 @@ public partial class MainWindow : Window
     {
         bool on = EqEnableCheckBox.IsChecked == true;
         _engine.EqEnabled = on;
-        EqBandsPanel.IsEnabled = on;
+        // Fires during InitializeComponent before EqBandsPanel exists.
+        if (EqBandsPanel != null)
+            EqBandsPanel.IsEnabled = on;
     }
 
     private void ApplyEqToSliders(float[] gains)
@@ -370,6 +416,7 @@ public partial class MainWindow : Window
         {
             for (int i = 0; i < _eqSliders.Length; i++)
             {
+                if (_eqSliders[i] == null) continue;
                 _eqSliders[i].Value = gains[i];
                 _eqSliders[i].ToolTip = EqTip(GraphicEqualizer.CenterFrequencies[i], gains[i]);
             }
@@ -430,11 +477,13 @@ public partial class MainWindow : Window
         bool loaded = _engine.IsLoaded;
         PlayButton.IsEnabled = loaded;
         StopButton.IsEnabled = loaded;
+        ReverseButton.IsEnabled = loaded;
         ExportButton.IsEnabled = loaded;
         SetAButton.IsEnabled = loaded;
         SetBButton.IsEnabled = loaded;
         ClearLoopButton.IsEnabled = loaded;
         LoopCheckBox.IsEnabled = loaded;
+        UpdateReverseUi();
     }
 
     private static string FormatTime(TimeSpan t)
