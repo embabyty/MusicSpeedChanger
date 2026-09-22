@@ -1,0 +1,2 @@
+C:\Users\Em\MusicSpeedChanger\dist\publish\MusicSpeedChanger.pdb
+C:\Users\Em\MusicSpeedChanger\dist\publish\MusicSpeedChanger.exe

@@ -4,6 +4,7 @@
         xmlns:controls="clr-namespace:MusicSpeedChanger.Controls"
         Title="Music Speed Changer" Height="860" Width="980"
         MinHeight="740" MinWidth="760"
+        Icon="Assets/AppIcon.ico"
         Background="#14141C" Foreground="#E8E8F0"
         FontFamily="Segoe UI" WindowStartupLocation="CenterScreen">
     <Window.Resources>
@@ -54,6 +55,7 @@
     <DockPanel Margin="12">
         <!-- Header -->
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <Image Source="Assets/MusicSpeed.png" Width="32" Height="32" Margin="0,0,8,0" VerticalAlignment="Center"/>
             <Button x:Name="OpenButton" Content="📂 Open…" Click="OpenButton_Click" FontWeight="SemiBold"/>
             <Button x:Name="ExportButton" Content="💾 Export WAV…" Click="ExportButton_Click" IsEnabled="False"/>
             <TextBlock x:Name="FileLabel" Text="No file loaded" VerticalAlignment="Center" Margin="12,0"
