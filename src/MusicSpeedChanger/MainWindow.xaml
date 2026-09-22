@@ -1,0 +1,188 @@
+﻿<Window x:Class="MusicSpeedChanger.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:MusicSpeedChanger.Controls"
+        Title="Music Speed Changer" Height="860" Width="980"
+        MinHeight="740" MinWidth="760"
+        Background="#14141C" Foreground="#E8E8F0"
+        FontFamily="Segoe UI" WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#2A2A3A"/>
+            <Setter Property="Foreground" Value="#E8E8F0"/>
+            <Setter Property="BorderBrush" Value="#3D3D55"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#3A3A52"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Slider">
+            <Setter Property="Margin" Value="4"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="GroupBox">
+            <Setter Property="Foreground" Value="#B8B8D0"/>
+            <Setter Property="BorderBrush" Value="#3D3D55"/>
+            <Setter Property="Margin" Value="6"/>
+            <Setter Property="Padding" Value="8"/>
+        </Style>
+        <Style TargetType="TextBlock" x:Key="ValueLabel">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="MinWidth" Value="90"/>
+            <Setter Property="TextAlignment" Value="Right"/>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="12">
+        <!-- Header -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button x:Name="OpenButton" Content="📂 Open…" Click="OpenButton_Click" FontWeight="SemiBold"/>
+            <Button x:Name="ExportButton" Content="💾 Export WAV…" Click="ExportButton_Click" IsEnabled="False"/>
+            <TextBlock x:Name="FileLabel" Text="No file loaded" VerticalAlignment="Center" Margin="12,0"
+                       Foreground="#B8B8D0" TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="StatusLabel" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="#7C9EFF" HorizontalAlignment="Right"/>
+        </StackPanel>
+
+        <!-- Transport bar (bottom) -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+            <Button x:Name="PlayButton" Content="▶ Play" Click="PlayButton_Click" IsEnabled="False"
+                    FontSize="14" Padding="20,8" Background="#2E7D32" BorderBrush="#2E7D32"/>
+            <Button x:Name="StopButton" Content="⏹ Stop" Click="StopButton_Click" IsEnabled="False" FontSize="14" Padding="20,8"/>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                <TextBlock Text="🔊" VerticalAlignment="Center"/>
+                <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" Width="120"
+                        ValueChanged="VolumeSlider_ValueChanged"/>
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Time row (above transport) -->
+        <Grid DockPanel.Dock="Bottom" Margin="0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="70"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="70"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" x:Name="CurrentTimeLabel" Text="0:00.0"/>
+            <Slider Grid.Column="1" x:Name="SeekSlider" Minimum="0" Maximum="1000" Value="0"
+                    HorizontalAlignment="Stretch" ValueChanged="SeekSlider_ValueChanged"
+                    PreviewMouseDown="SeekSlider_PreviewMouseDown" PreviewMouseUp="SeekSlider_PreviewMouseUp"/>
+            <TextBlock Grid.Column="2" x:Name="TotalTimeLabel" Text="0:00.0" TextAlignment="Right"/>
+            <TextBlock Grid.Column="3" x:Name="EffectiveTimeLabel" Text="" Foreground="#7C9EFF" Margin="8,0,0,0"/>
+        </Grid>
+
+        <!-- Main content -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" BorderBrush="#3D3D55" BorderThickness="1" CornerRadius="8" Padding="2" Margin="0,0,0,6">
+                <controls:WaveformControl x:Name="Waveform" SeekRequested="Waveform_SeekRequested"/>
+            </Border>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Tempo -->
+                <GroupBox Grid.Column="0" Header="Tempo (speed, keeps pitch)">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="TempoSlider" Minimum="25" Maximum="200" Value="100"
+                                    Width="170" TickFrequency="5" IsSnapToTickEnabled="False"
+                                    ValueChanged="TempoSlider_ValueChanged"/>
+                            <TextBlock x:Name="TempoLabel" Text="100%" Style="{StaticResource ValueLabel}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <Button Content="0.5x" Tag="50" Click="TempoPreset_Click" Padding="8,2"/>
+                            <Button Content="0.75x" Tag="75" Click="TempoPreset_Click" Padding="8,2"/>
+                            <Button Content="1x" Tag="100" Click="TempoPreset_Click" Padding="8,2"/>
+                            <Button Content="1.25x" Tag="125" Click="TempoPreset_Click" Padding="8,2"/>
+                            <Button Content="1.5x" Tag="150" Click="TempoPreset_Click" Padding="8,2"/>
+                        </StackPanel>
+                        <Button Content="Reset tempo" Click="ResetTempo_Click" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Pitch -->
+                <GroupBox Grid.Column="1" Header="Pitch (key, keeps tempo)">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="PitchSlider" Minimum="-12" Maximum="12" Value="0"
+                                    Width="170" TickFrequency="0.5" ValueChanged="PitchSlider_ValueChanged"/>
+                            <TextBlock x:Name="PitchLabel" Text="+0.0 st" Style="{StaticResource ValueLabel}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <Button Content="-5" Tag="-5" Click="PitchPreset_Click" Padding="8,2"/>
+                            <Button Content="-2" Tag="-2" Click="PitchPreset_Click" Padding="8,2"/>
+                            <Button Content="0" Tag="0" Click="PitchPreset_Click" Padding="8,2"/>
+                            <Button Content="+2" Tag="2" Click="PitchPreset_Click" Padding="8,2"/>
+                            <Button Content="+5" Tag="5" Click="PitchPreset_Click" Padding="8,2"/>
+                        </StackPanel>
+                        <Button Content="Reset pitch" Click="ResetPitch_Click" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <!-- Loop -->
+                <GroupBox Grid.Column="2" Header="AB Loop (practice sections)">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <Button x:Name="SetAButton" Content="Set A ⏺" Click="SetAButton_Click" IsEnabled="False"/>
+                            <Button x:Name="SetBButton" Content="Set B ⏺" Click="SetBButton_Click" IsEnabled="False"/>
+                            <Button x:Name="ClearLoopButton" Content="Clear" Click="ClearLoopButton_Click" IsEnabled="False"/>
+                        </StackPanel>
+                        <TextBlock x:Name="LoopLabel" Text="No loop set" HorizontalAlignment="Center"
+                                   Foreground="#FFC107" Margin="0,4"/>
+                        <CheckBox x:Name="LoopCheckBox" Content="Loop A–B" IsEnabled="False"
+                                  Foreground="#E8E8F0" HorizontalAlignment="Center"
+                                  Checked="LoopCheckBox_Changed" Unchecked="LoopCheckBox_Changed"/>
+                    </StackPanel>
+                </GroupBox>
+            </Grid>
+
+            <!-- 31-band equalizer -->
+            <GroupBox Grid.Row="2" Header="31-Band Equalizer (20 Hz – 20 kHz)">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,4">
+                        <CheckBox x:Name="EqEnableCheckBox" Content="Enable EQ" IsChecked="True"
+                                  Foreground="#E8E8F0" VerticalAlignment="Center" Margin="0,0,12,0"
+                                  Checked="EqEnableCheckBox_Changed" Unchecked="EqEnableCheckBox_Changed"/>
+                        <TextBlock Text="Preset:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="#B8B8D0"/>
+                        <ComboBox x:Name="EqPresetBox" Width="150" SelectionChanged="EqPresetBox_SelectionChanged"/>
+                        <Button Content="Flat" Click="EqFlatButton_Click" Padding="12,2"/>
+                        <TextBlock x:Name="EqHintLabel" Text="+/-15 dB per band, 1 dB steps"
+                                   VerticalAlignment="Center" Margin="12,0,0,0" Foreground="#77778A"/>
+                    </StackPanel>
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="EqBandsPanel" Orientation="Horizontal"/>
+                    </ScrollViewer>
+                </StackPanel>
+            </GroupBox>
+        </Grid>
+    </DockPanel>
+</Window>
