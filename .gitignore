@@ -1,0 +1,25 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+*.user
+*.suo
+.vs/
+TestResults/
+
+# NuGet
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Publish staging (recreate with: dotnet publish ... -o dist/publish)
+# NOTE: dist/ release artifacts (*.exe + installer) are intentionally
+# tracked via Git LFS — do not ignore dist/.
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
