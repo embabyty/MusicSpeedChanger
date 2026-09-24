@@ -2,10 +2,17 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
+    <UseWinUI>true</UseWinUI>
+    <!-- Unpackaged (classic exe, same as before) — no MSIX required -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <AssemblyName>MusicSpeedChanger</AssemblyName>
     <RootNamespace>MusicSpeedChanger</RootNamespace>
     <Product>Music Speed Changer</Product>
@@ -16,16 +23,38 @@
     <Version>1.0.0</Version>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Win32Icon>Assets\AppIcon.ico</Win32Icon>
+    <!-- CsWinRT needs this for trimmed/published builds -->
+    <CsWinRTIncludes>Windows.Storage.Pickers;Windows.Win32</CsWinRTIncludes>
+  </PropertyGroup>
+
+  <!-- dotnet CLI ships no AppxPackage MSBuild tasks; fall back to the VS install. -->
+  <PropertyGroup>
+    <VsAppxPackageDir Condition="Exists('C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll')">C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\</VsAppxPackageDir>
+    <VsAppxPackageDir Condition="'$(VsAppxPackageDir)' == '' and Exists('C:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll')">C:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\</VsAppxPackageDir>
+    <VsAppxPackageDir Condition="'$(VsAppxPackageDir)' == '' and Exists('C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll')">C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\</VsAppxPackageDir>
+    <AppxMSBuildToolsPath Condition="'$(VsAppxPackageDir)' != ''">$(VsAppxPackageDir)</AppxMSBuildToolsPath>
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\AppIcon.ico" />
-    <Resource Include="Assets\MusicSpeed.png" />
+    <Manifest Include="app.manifest" />
+    <Content Include="Assets\AppIcon.ico" />
+    <Content Include="Assets\MusicSpeed.png" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="SoundTouch.Net" Version="2.3.2" />
   </ItemGroup>
+
+  <!-- dotnet publish omits the app's own .xbf/.pri for unpackaged WinUI apps; copy them over. -->
+  <Target Name="CopyWinUiPublishAssets" AfterTargets="Publish">
+    <ItemGroup>
+      <WinUiPublishFix Include="$(OutputPath)*.xbf" />
+      <WinUiPublishFix Include="$(OutputPath)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WinUiPublishFix)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

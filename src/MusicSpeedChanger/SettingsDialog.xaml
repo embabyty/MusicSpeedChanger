@@ -1,0 +1,73 @@
+<ContentDialog
+    x:Class="MusicSpeedChanger.SettingsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Settings"
+    PrimaryButtonText="Done"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary">
+
+    <ContentDialog.Resources>
+        <Style TargetType="TextBlock" x:Key="SectionHeader">
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="Margin" Value="0,12,0,4" />
+        </Style>
+    </ContentDialog.Resources>
+
+    <ScrollViewer MaxHeight="560">
+        <StackPanel MinWidth="420" Spacing="4">
+            <TextBlock x:Name="VersionLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+            <!-- Updates -->
+            <TextBlock Text="Updates" Style="{StaticResource SectionHeader}" />
+            <ToggleSwitch x:Name="AutoCheckSwitch" Header="Automatically check for updates on startup" />
+            <TextBox x:Name="FeedUrlBox" Header="Update feed (GitHub Releases API or JSON {version, notes, url})" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                <Button x:Name="CheckNowButton" Content="Check now" Click="CheckNowButton_Click" />
+                <Button x:Name="InstallUpdateButton" Content="Download &amp; install" Visibility="Collapsed"
+                        Click="InstallUpdateButton_Click" Style="{ThemeResource AccentButtonStyle}" />
+            </StackPanel>
+            <TextBlock x:Name="UpdateStatusLabel" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+            <!-- Speed & pitch -->
+            <TextBlock Text="Speed &amp; pitch" Style="{StaticResource SectionHeader}" />
+            <NumberBox x:Name="DefaultTempoBox" Header="Default tempo (%)"
+                       Minimum="25" Maximum="300" SpinButtonPlacementMode="Inline" />
+            <NumberBox x:Name="DefaultPitchBox" Header="Default pitch (semitones)"
+                       Minimum="-12" Maximum="12" SpinButtonPlacementMode="Inline" />
+            <CheckBox x:Name="ApplyDefaultsBox" Content="Reset to these defaults when a file is opened" />
+            <NumberBox x:Name="TempoStepBox" Header="Tempo slider step (%)"
+                       Minimum="0.5" Maximum="10" SpinButtonPlacementMode="Inline" />
+            <NumberBox x:Name="PitchStepBox" Header="Pitch slider step (semitones)"
+                       Minimum="0.1" Maximum="1" SpinButtonPlacementMode="Inline" />
+
+            <!-- Editor controls -->
+            <TextBlock Text="Editor controls" Style="{StaticResource SectionHeader}" />
+            <CheckBox x:Name="ShowTempoBox" Content="Show Tempo panel" />
+            <CheckBox x:Name="ShowPitchBox" Content="Show Pitch panel" />
+            <CheckBox x:Name="ShowLoopBox" Content="Show AB Loop panel" />
+            <CheckBox x:Name="ShowEqBox" Content="Show Equalizer panel" />
+            <NumberBox x:Name="WaveformPeaksBox" Header="Waveform detail (bars, applies to next file)"
+                       Minimum="100" Maximum="8000" SpinButtonPlacementMode="Inline" />
+            <CheckBox x:Name="ClickToSeekBox" Content="Click / drag the waveform to seek" />
+
+            <!-- Effects -->
+            <TextBlock Text="Effects" Style="{StaticResource SectionHeader}" />
+            <CheckBox x:Name="RememberEffectsBox"
+                      Content="Save effects and restore them on startup (tempo, pitch, volume, EQ)" />
+            <TextBlock Text="When off, newly opened files use the defaults above instead."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+            <!-- Appearance -->
+            <TextBlock Text="Appearance" Style="{StaticResource SectionHeader}" />
+            <ToggleSwitch x:Name="UseAccentSwitch" Header="Match the Windows accent color"
+                          Toggled="UseAccentSwitch_Toggled" />
+            <TextBlock Text="Custom accent (when above is off)"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <ColorPicker x:Name="CustomAccentPicker"
+                         IsAlphaEnabled="False" IsHexInputVisible="True" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

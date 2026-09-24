@@ -1,5 +1,7 @@
 ; Music Speed Changer — Inno Setup installer
-; Builds Setup-MusicSpeedChanger-1.0.0.exe from the published single-file exe.
+; Builds Setup-MusicSpeedChanger-1.0.0.exe from the published WinUI 3 build.
+; Publish first (WinUI unpackaged self-contained ships the whole folder):
+;   dotnet publish src/MusicSpeedChanger/MusicSpeedChanger.csproj -c Release -p:Platform=x64 -o dist/publish
 
 #define MyAppName "Music Speed Changer"
 #define MyAppExeName "MusicSpeedChanger.exe"
@@ -31,7 +33,8 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "..\dist\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; WinUI 3 unpackaged app: exe + WindowsAppSDK runtime + .xbf/.pri/assets travel together.
+Source: "..\dist\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

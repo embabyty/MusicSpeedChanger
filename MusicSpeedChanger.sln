@@ -9,17 +9,29 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MusicSpeedChanger", "src\Mu
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
+		Debug|x86 = Debug|x86
+		Debug|x64 = Debug|x64
+		Debug|ARM64 = Debug|ARM64
+		Release|x86 = Release|x86
+		Release|x64 = Release|x64
+		Release|ARM64 = Release|ARM64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|x86.ActiveCfg = Debug|x86
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|x86.Build.0 = Debug|x86
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|x64.ActiveCfg = Debug|x64
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|x64.Build.0 = Debug|x64
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Debug|ARM64.Build.0 = Debug|ARM64
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|x86.ActiveCfg = Release|x86
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|x86.Build.0 = Release|x86
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|x64.ActiveCfg = Release|x64
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|x64.Build.0 = Release|x64
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|ARM64.ActiveCfg = Release|ARM64
+		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA}.Release|ARM64.Build.0 = Release|ARM64
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{34EEEBC5-E40B-4325-A2E9-3467C48ACDFA} = {3E7646D0-4BF0-4D64-BFC7-B7423874DCB3}
