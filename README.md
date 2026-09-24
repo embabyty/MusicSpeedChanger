@@ -14,6 +14,10 @@ musicians practicing tricky sections.
 - **Waveform display** with playhead, click/drag to seek, loop-region highlight
 - **Export to WAV** with current tempo + pitch + EQ (exports the AB loop if one is set, `_eq` in filename when EQ is active)
 - Volume control, effective-duration readout ("plays as 2:00 @ 150%")
+- Clean DSP chain: SoundTouch runs with the anti-alias filter (64 taps) and
+  exact-seek mode, a long-window stretch profile kicks in below ~65% speed to
+  avoid slow-tempo warble, and a transparent peak limiter (-0.2 dBFS) after the
+  EQ stops stretch/EQ overshoot from clipping — playback and exports alike
 - **Automatic updates** — checks GitHub Releases on startup, downloads and launches the installer
 - **Settings** (⚙ in the header): update feed + manual check, default tempo/pitch and slider steps,
   editor panel visibility, waveform detail, click-to-seek, save/restore of effects

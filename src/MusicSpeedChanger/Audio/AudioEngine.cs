@@ -188,7 +188,7 @@ public sealed class AudioEngine : IDisposable
     }
 
     /// <summary>
-    /// (Re)builds the processing chain (SoundTouch tempo/pitch + EQ + volume + output)
+    /// (Re)builds the processing chain (SoundTouch tempo/pitch + EQ + limiter + volume + output)
     /// around the given source, preserving tempo, pitch, EQ, and device volume.
     /// </summary>
     private void BuildOutputChain(ISampleProvider source)
@@ -215,7 +215,9 @@ public sealed class AudioEngine : IDisposable
         _eq = new EqualizerSampleProvider(_processor);
         _eq.Equalizer.SetGains(_eqGains);
         _eq.Enabled = EqEnabled;
-        _volumeProvider = new VolumeSampleProvider(_eq) { Volume = 1f };
+        // Limiter sits post-EQ so stretch overshoot + EQ boosts never clip the DAC.
+        var limiter = new LimiterSampleProvider(_eq);
+        _volumeProvider = new VolumeSampleProvider(limiter) { Volume = 1f };
 
         _output = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 3 };
         try { _output.Volume = deviceVolume; } catch { /* ignore */ }
@@ -372,19 +374,26 @@ public sealed class AudioEngine : IDisposable
             TimeSpan endTime = to ?? reader.TotalTime;
 
             var sample = reader.ToSampleProvider();
+            double exportTempo = Math.Clamp(tempo, 0.25, 3.0);
             var st = new SoundTouchProcessor
             {
                 Channels = sample.WaveFormat.Channels,
                 SampleRate = sample.WaveFormat.SampleRate,
-                Tempo = Math.Clamp(tempo, 0.25, 3.0),
+                Tempo = exportTempo,
                 PitchSemiTones = Math.Clamp(pitchSemitones, -12.0, 12.0)
             };
+            SoundTouchSampleProvider.ConfigureQuality(st);
+            if (exportTempo < 0.65)
+                SoundTouchSampleProvider.ConfigureSlowStretch(st);
             int channels = sample.WaveFormat.Channels;
 
             // Mirror of the realtime EQ stage (bypassed when flat/disabled).
             var eq = new GraphicEqualizer(sample.WaveFormat.SampleRate, channels);
             eq.SetGains(eqGains);
             bool useEq = eqOn && !eq.IsFlat;
+
+            // Mirror of the realtime limiter stage.
+            var limiter = new LimiterSampleProvider(sample.WaveFormat);
 
             var outFormat = new WaveFormat(sample.WaveFormat.SampleRate, sample.WaveFormat.Channels);
             using var writer = new WaveFileWriter(destination, outFormat);
@@ -407,6 +416,7 @@ public sealed class AudioEngine : IDisposable
                     if (received > 0)
                     {
                         if (useEq) eq.Process(outBuf, 0, received * channels);
+                        limiter.Process(outBuf, 0, received * sample.WaveFormat.Channels);
                         writer.WriteSamples(outBuf, 0, received * sample.WaveFormat.Channels);
                     }
                 } while (received > 0);
@@ -423,6 +433,7 @@ public sealed class AudioEngine : IDisposable
                 if (tail > 0)
                 {
                     if (useEq) eq.Process(outBuf, 0, tail * channels);
+                    limiter.Process(outBuf, 0, tail * sample.WaveFormat.Channels);
                     writer.WriteSamples(outBuf, 0, tail * sample.WaveFormat.Channels);
                 }
             } while (tail > 0);
