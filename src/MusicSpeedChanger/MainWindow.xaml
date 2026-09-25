@@ -206,7 +206,7 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="Tempo" Style="{StaticResource CardHeader}" VerticalAlignment="Center" Margin="0,0,0,0" />
                                         <TextBlock x:Name="TempoLabel" Text="100%" Foreground="#7C9EFF" FontWeight="SemiBold"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                   Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         <Button Click="ResetTempo_Click" Grid.Column="2" Padding="8,2" VerticalAlignment="Center">
                                             <ToolTipService.ToolTip>
                                                 <ToolTip Content="Reset tempo to 100%" />
@@ -240,7 +240,7 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="Pitch" Style="{StaticResource CardHeader}" VerticalAlignment="Center" Margin="0,0,0,0" />
                                         <TextBlock x:Name="PitchLabel" Text="+0.0 st" Foreground="#7C9EFF" FontWeight="SemiBold"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                   Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         <Button Click="ResetPitch_Click" Grid.Column="2" Padding="8,2" VerticalAlignment="Center">
                                             <ToolTipService.ToolTip>
                                                 <ToolTip Content="Reset pitch to +0.0 st" />
