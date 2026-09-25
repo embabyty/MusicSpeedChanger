@@ -1,5 +1,7 @@
 # MusicSpeedChanger (Desktop)
 
+<img src="src/MusicSpeedChanger/Assets/MusicSpeed.png" width="128" alt="MusicSpeedChanger logo" />
+
 A Windows desktop version of the Music Speed Changer mobile app — slow down / speed up
 music **without changing pitch**, and shift key **without changing tempo**. Built for
 musicians practicing tricky sections.
