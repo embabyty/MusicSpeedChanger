@@ -59,6 +59,9 @@ public sealed partial class MainWindow : Window
     // ----- Windows media controls (Action Center / flyout / lock screen) -----
     private readonly SmtcService _smtc = new();
     private DateTime _lastSmtcTimeline = DateTime.MinValue;
+
+    // ----- Beta gate (Patreon login required to run beta builds) -----
+    private bool _betaGateActive;
     private static readonly string[] AudioExtensions =
         { ".mp3", ".wav", ".m4a", ".aac", ".wma", ".aiff", ".aif", ".flac" };
 
@@ -146,6 +149,7 @@ public sealed partial class MainWindow : Window
         UpdateShuffleRepeatUi();
         UpdateNextUp();
         InitSmtc();
+        MaybeShowBetaGateAsync();
 
         if (_settings.AutoCheckUpdates)
             CheckForUpdatesOnStartupAsync();
@@ -313,6 +317,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await Task.Delay(2500);
+            if (_betaGateActive) return; // gated: user verifies (or exits) first
             var info = await UpdateService.CheckForUpdateAsync(_settings.UpdateFeedUrl, _settings.IncludeBetaUpdates);
             if (info == null) return;
             await PromptUpdateAsync(info);
@@ -412,6 +417,59 @@ public sealed partial class MainWindow : Window
         _settings.Save();
     }
 
+    // ---------- Beta gate (startup Patreon requirement for beta builds) ----------
+
+    private static bool IsBetaBuild() =>
+        UpdateService.DisplayVersion.IndexOf("beta", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    /// <summary>
+    /// Beta builds require an active Patreon membership to run at all. Linked
+    /// users re-verify silently; everyone else gets the blocking gate overlay
+    /// (no dismiss affordance — login or exit). Stable builds skip this entirely.
+    /// </summary>
+    private async void MaybeShowBetaGateAsync()
+    {
+        try
+        {
+            if (!IsBetaBuild() || BetaGateOverlay == null) return;
+            if (!string.IsNullOrEmpty(_settings.PatreonRefreshToken))
+            {
+                var silent = await PatreonAuthService.RefreshAndVerifyAsync(_settings.PatreonRefreshToken);
+                if (silent != null)
+                {
+                    ApplyPatreonAccount(silent);
+                    return;
+                }
+                ClearPatreonLink();
+            }
+            _betaGateActive = true;
+            BetaGateOverlay.Visibility = Visibility.Visible;
+        }
+        catch { /* gate is best-effort; a failure here must not crash startup */ }
+    }
+
+    private async void BetaGateLoginButton_Click(object sender, RoutedEventArgs e)
+    {
+        BetaGateLoginButton.IsEnabled = false;
+        try
+        {
+            var progress = new Progress<string>(s => BetaGateStatus.Text = s);
+            var account = await PatreonAuthService.LoginAsync(progress);
+            if (account == null)
+            {
+                BetaGateStatus.Text = "Login didn't complete, or no active membership was found.";
+                return;
+            }
+            ApplyPatreonAccount(account);
+            _betaGateActive = false;
+            BetaGateOverlay.Visibility = Visibility.Collapsed;
+        }
+        finally { BetaGateLoginButton.IsEnabled = true; }
+    }
+
+    private void BetaGateDeclineButton_Click(object sender, RoutedEventArgs e) =>
+        Application.Current.Exit();
+
     private async Task DownloadAndInstallAsync(UpdateInfo info)
     {
         var progress = new Progress<double>(p => StatusLabel.Text = $"Downloading update… {p * 100:0}%");
@@ -444,15 +502,6 @@ public sealed partial class MainWindow : Window
             picker.FileTypeFilter.Add(ext);
         InitializeWithWindow.Initialize(picker, WindowHandle);
         return picker;
-    }
-
-    private async void OpenButton_Click(object sender, RoutedEventArgs e)
-    {
-        var file = await CreateAudioPicker().PickSingleFileAsync();
-        if (file == null) return;
-
-        // Open keeps today's behavior (loads paused) and adds the file to the queue.
-        await AddFiles(new[] { file.Path }, select: true, autoplay: false);
     }
 
     // ---------- Queue ----------
@@ -710,7 +759,7 @@ public sealed partial class MainWindow : Window
         else if (_repeatMode == RepeatAll)
             NextUpLabel.Text = $"Playing Next: {_tracks[0].Name} (repeat all)";
         else
-            NextUpLabel.Text = current >= 0 ? "End of queue" : "";
+            NextUpLabel.Text = current >= 0 ? "End of files" : "";
     }
 
     private void CapturePlaylistState()
@@ -907,6 +956,15 @@ public sealed partial class MainWindow : Window
         _engine.Progress = progress;
         RefreshPosition();
         RefreshSmtcTimeline(force: true);
+    }
+
+    /// <summary>Mobile-style magnifier: cycles waveform zoom levels 0..10.</summary>
+    private void ZoomButton_Click(object sender, RoutedEventArgs e)
+    {
+        Waveform.ZoomLevel = (Waveform.ZoomLevel + 1) % 11;
+        ZoomBadge.Text = Waveform.ZoomLevel.ToString();
+        ToolTipService.SetToolTip(ZoomButton,
+            $"Waveform zoom — level {Waveform.ZoomLevel} of 10 (click to zoom in)");
     }
 
     private void RefreshPosition()

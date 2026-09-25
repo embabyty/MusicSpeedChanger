@@ -14,7 +14,7 @@
         <!-- Custom title bar: transparent so the Mica backdrop shows through.
              Set as the draggable title-bar region in code-behind. -->
         <Grid x:Name="AppTitleBar" Height="40" Background="Transparent">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <Image Source="ms-appx:///Assets/MusicSpeed.png" Width="16" Height="16"
                        Margin="0,0,8,0" VerticalAlignment="Center" />
                 <TextBlock Text="Music Speed Changer" VerticalAlignment="Center"
@@ -95,34 +95,32 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <!-- Toolbar -->
-            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="8,6">
-                    <ToolTipService.ToolTip>
-                        <ToolTip Content="Open audio file" />
-                    </ToolTipService.ToolTip>
-                    <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" />
-                </Button>
-                <Button x:Name="ExportButton" Click="ExportButton_Click" IsEnabled="False" Padding="8,6">
+            <!-- Toolbar: status left, Save right (Open lives in the Files + button) -->
+            <Grid Grid.Row="0" Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusLabel" Text="" VerticalAlignment="Center"
+                           Foreground="#7C9EFF" />
+                <Button x:Name="ExportButton" Grid.Column="1" Click="ExportButton_Click" IsEnabled="False" Padding="8,6">
                     <ToolTipService.ToolTip>
                         <ToolTip Content="Save edited audio" />
                     </ToolTipService.ToolTip>
                     <FontIcon Glyph="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" />
                 </Button>
-                <TextBlock x:Name="StatusLabel" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
-                           Foreground="#7C9EFF" HorizontalAlignment="Right" />
-            </StackPanel>
+            </Grid>
 
             <!-- Views -->
             <Grid Grid.Row="1">
-                <!-- Player view: queue + controls -->
+                <!-- Player view: files + controls -->
                 <Grid x:Name="PlayerView">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="230" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Queue sidebar -->
+                    <!-- Files sidebar -->
                     <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,6,6" Padding="8">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -131,7 +129,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <TextBlock Text="Queue" Style="{StaticResource CardHeader}" />
+                            <TextBlock Text="Files" Style="{StaticResource CardHeader}" />
                             <ListView Grid.Row="1" x:Name="FileListView" SelectionMode="Single"
                                       SelectionChanged="FileListView_SelectionChanged"
                                       AllowDrop="True" DragOver="FileList_DragOver" Drop="FileList_Drop"
@@ -155,7 +153,7 @@
                             <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
                                 <Button Click="AddFilesButton_Click" Padding="8,2">
                                     <ToolTipService.ToolTip>
-                                        <ToolTip Content="Add files to the queue" />
+                                        <ToolTip Content="Add files" />
                                     </ToolTipService.ToolTip>
                                     <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
                                 </Button>
@@ -167,7 +165,7 @@
                                 </Button>
                                 <Button Click="ClearFilesButton_Click" Padding="8,2">
                                     <ToolTipService.ToolTip>
-                                        <ToolTip Content="Clear queue" />
+                                        <ToolTip Content="Clear files" />
                                     </ToolTipService.ToolTip>
                                     <FontIcon Glyph="&#xE8E6;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
                                 </Button>
@@ -185,9 +183,26 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="2" Margin="0,0,0,6">
-                            <controls:WaveformControl x:Name="Waveform" SeekRequested="Waveform_SeekRequested" />
-                        </Border>
+                        <Grid Grid.Row="0" Margin="0,0,0,6">
+                            <Border Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="2">
+                                <controls:WaveformControl x:Name="Waveform" SeekRequested="Waveform_SeekRequested" />
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0">
+                                <Border Background="#2A2A3A" BorderBrush="#3D3D55" BorderThickness="1" CornerRadius="6" Padding="8,2" VerticalAlignment="Center">
+                                    <TextBlock x:Name="ZoomBadge" Text="0" FontSize="12" Foreground="#E8E8F0" VerticalAlignment="Center">
+                                        <ToolTipService.ToolTip>
+                                            <ToolTip Content="Waveform zoom level (0 = fit all)" />
+                                        </ToolTipService.ToolTip>
+                                    </TextBlock>
+                                </Border>
+                                <Button x:Name="ZoomButton" Click="ZoomButton_Click" Padding="8,4" VerticalAlignment="Center">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Waveform zoom — click to zoom in" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE71E;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
 
                         <Grid Grid.Row="1">
                             <Grid.ColumnDefinitions>
@@ -408,7 +423,7 @@
                             <Button x:Name="ShuffleButton" Click="ShuffleButton_Click" IsEnabled="False"
                                     Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent">
                                 <ToolTipService.ToolTip>
-                                    <ToolTip Content="Shuffle queue" />
+                                    <ToolTip Content="Shuffle files" />
                                 </ToolTipService.ToolTip>
                                 <FontIcon x:Name="ShuffleIcon" Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" />
                             </Button>
@@ -465,5 +480,26 @@
         </Grid>
     </Grid>
     </Border>
+
+    <!-- Beta gate: full-window veil, no dismiss affordance (beta builds only).
+         Shown on startup until Patreon login verifies; "No thank you" exits. -->
+    <Grid x:Name="BetaGateOverlay" Grid.RowSpan="2" Visibility="Collapsed"
+          Background="#E6101018" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Border Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="12" Padding="28"
+                HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="440">
+            <StackPanel Spacing="12">
+                <TextBlock Text="Patreon subscribers are required to use MSC Beta"
+                           FontSize="18" FontWeight="SemiBold" Foreground="#E8E8F0"
+                           TextWrapping="Wrap" TextAlignment="Center" />
+                <TextBlock x:Name="BetaGateStatus" Text="Log in with Patreon to verify your membership."
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" TextAlignment="Center" />
+                <Button x:Name="BetaGateLoginButton" Content="Login with Patreon" Click="BetaGateLoginButton_Click"
+                        HorizontalAlignment="Stretch" Style="{ThemeResource AccentButtonStyle}" />
+                <Button Content="No thank you" Click="BetaGateDeclineButton_Click" HorizontalAlignment="Stretch" />
+            </StackPanel>
+        </Border>
+    </Grid>
     </Grid>
 </Window>

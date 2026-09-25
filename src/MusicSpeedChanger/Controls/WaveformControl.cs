@@ -46,6 +46,17 @@ public sealed class WaveformControl : Grid
         set => SetValue(LoopBProperty, value);
     }
 
+    public static readonly DependencyProperty ZoomLevelProperty =
+        DependencyProperty.Register(nameof(ZoomLevel), typeof(int), typeof(WaveformControl),
+            new PropertyMetadata(0, (d, _) => ((WaveformControl)d).Render()));
+
+    /// <summary>Waveform zoom 0..10 (mobile magnifier parity). 0 = fit whole track, each 2 levels ≈ 2x.</summary>
+    public int ZoomLevel
+    {
+        get => (int)GetValue(ZoomLevelProperty);
+        set => SetValue(ZoomLevelProperty, Math.Clamp(value, 0, 10));
+    }
+
     public WaveformData? Data
     {
         get => _data;
@@ -69,6 +80,8 @@ public sealed class WaveformControl : Grid
 
     private readonly Image _image;
     private readonly TextBlock _hint;
+    private readonly Border _markerA;
+    private readonly Border _markerB;
     private WriteableBitmap? _bitmap;
 
     // Scrolling-window state (iOS-style fixed playhead): _windowStart is the
@@ -94,6 +107,10 @@ public sealed class WaveformControl : Grid
         };
         Children.Add(_image);
         Children.Add(_hint);
+        _markerA = MakeLoopMarker("A");
+        _markerB = MakeLoopMarker("B");
+        Children.Add(_markerA);
+        Children.Add(_markerB);
 
         SizeChanged += (_, _) => Render();
         PointerPressed += OnPointerPressed;
@@ -157,6 +174,8 @@ public sealed class WaveformControl : Grid
         _image.Visibility = hasData ? Visibility.Visible : Visibility.Collapsed;
         if (!hasData)
         {
+            _markerA.Visibility = Visibility.Collapsed;
+            _markerB.Visibility = Visibility.Collapsed;
             // Still paint a background so the empty area isn't transparent.
             FillBackgroundOnly(_bitmap);
             return;
@@ -166,10 +185,12 @@ public sealed class WaveformControl : Grid
         int n = peaks.Length;
         double mid = h / 2.0;
 
-        // Scrolling window (iOS-style): the playhead stays fixed at the
-        // center while the waveform moves. ~3px per bar, clamped so short
-        // files still fit (then it behaves like the old fit-all view).
-        double windowBars = Math.Clamp(w / 3.0, 100, 600);
+        // Zoom (mobile magnifier levels 0..10): 0 fits the whole track and the
+        // playhead sweeps across; zoomed in, the playhead stays fixed near the
+        // center while the waveform scrolls (short files still fit at any level).
+        double windowBars = ZoomLevel <= 0
+            ? n
+            : Math.Clamp(n / Math.Pow(2, ZoomLevel * 0.5), 24, n);
         if (windowBars > n) windowBars = n;
         if (windowBars < 1) windowBars = 1;
         double progressIdx = Math.Clamp(Progress, 0, 1) * n;
@@ -248,6 +269,10 @@ public sealed class WaveformControl : Grid
             if (lx2 >= -2 && lx2 <= w) DrawVLine(px, w, h, (int)lx2, 0x07, 0xC1, 0xFF);
         }
 
+        // Circled A/B loop markers (mobile parity), positioned over the waveform.
+        PlaceLoopMarker(_markerA, LoopA, n, start, barW, w, ActualWidth);
+        PlaceLoopMarker(_markerB, LoopB, n, start, barW, w, ActualWidth);
+
         // Playhead white, 2px — fixed (center except at the very ends).
         DrawVLine(px, w, h, (int)playheadX, 255, 255, 255);
 
@@ -256,6 +281,56 @@ public sealed class WaveformControl : Grid
         s.Write(px, 0, px.Length);
         s.Flush();
         _bitmap.Invalidate();
+    }
+
+    /// <summary>Circled loop-point badge (mobile A/B parity). Hit-test invisible so seeking still works.</summary>
+    private static Border MakeLoopMarker(string letter)
+    {
+        var amber = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+            Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07));
+        return new Border
+        {
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(12),
+            BorderBrush = amber,
+            BorderThickness = new Thickness(2),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
+                Windows.UI.Color.FromArgb(180, 0x1E, 0x1E, 0x28)),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+            Child = new TextBlock
+            {
+                Text = letter,
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                Foreground = amber,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+    }
+
+    private static void PlaceLoopMarker(
+        Border marker, double? loop, int bars, double windowStart, double barW,
+        double renderW, double actualW)
+    {
+        if (!loop.HasValue || bars <= 0 || renderW <= 0 || actualW <= 0)
+        {
+            marker.Visibility = Visibility.Collapsed;
+            return;
+        }
+        double xRender = (Math.Clamp(loop.Value, 0, 1) * bars - windowStart) * barW;
+        if (xRender < -12 || xRender > renderW + 12)
+        {
+            marker.Visibility = Visibility.Collapsed; // scrolled out of view when zoomed
+            return;
+        }
+        double xControl = xRender * (actualW / renderW);
+        marker.Margin = new Thickness(Math.Clamp(xControl - 12, 0, Math.Max(0, actualW - 24)), 0, 0, 0);
+        marker.Visibility = Visibility.Visible;
     }
 
     private static void FillBackgroundOnly(WriteableBitmap bmp)
