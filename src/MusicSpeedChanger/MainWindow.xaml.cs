@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -9,7 +11,11 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using NAudio.Wave;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.System;
 using Windows.UI.ViewManagement;
 using WinRT.Interop;
 using MusicSpeedChanger.Audio;
@@ -34,6 +40,13 @@ public sealed partial class MainWindow : Window
     // ----- Settings / appearance / updates -----
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly UISettings _uiSettings = new();
+
+    // ----- Queue -----
+    private readonly ObservableCollection<TrackItem> _tracks = new();
+    private bool _playlistSync;
+    private bool _playlistAutoPlay = true;
+    private static readonly string[] AudioExtensions =
+        { ".mp3", ".wav", ".m4a", ".aac", ".wma", ".aiff", ".aif", ".flac" };
 
     // 31 gains each, band order = GraphicEqualizer.CenterFrequencies (20 Hz … 20 kHz).
     private static readonly Dictionary<string, float[]> EqPresets = new()
@@ -68,8 +81,8 @@ public sealed partial class MainWindow : Window
         TrySetIcon();
 
         ApplyStartupState();
-        BuildEqUi();
-        ApplyRememberedEq();
+        FileListView.ItemsSource = _tracks;
+        BuildEqUi();        ApplyRememberedEq();
         ApplyAccent();
         _uiSettings.ColorValuesChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
@@ -102,6 +115,7 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             CaptureEffectState();
+            CapturePlaylistState();
             _settings.Save();
             _engine.Dispose();
         };
@@ -109,6 +123,8 @@ public sealed partial class MainWindow : Window
 
         if (_settings.AutoCheckUpdates)
             CheckForUpdatesOnStartupAsync();
+
+        RestoreFileListAsync();
     }
 
     private void TrySizeWindow(int width, int height)
@@ -294,27 +310,220 @@ public sealed partial class MainWindow : Window
 
     // ---------- File ----------
 
-    private async void OpenButton_Click(object sender, RoutedEventArgs e)
+    private FileOpenPicker CreateAudioPicker()
     {
         var picker = new FileOpenPicker
         {
             SuggestedStartLocation = PickerLocationId.MusicLibrary,
             ViewMode = PickerViewMode.List,
         };
-        picker.FileTypeFilter.Add(".mp3");
-        picker.FileTypeFilter.Add(".wav");
-        picker.FileTypeFilter.Add(".m4a");
-        picker.FileTypeFilter.Add(".aac");
-        picker.FileTypeFilter.Add(".wma");
-        picker.FileTypeFilter.Add(".aiff");
-        picker.FileTypeFilter.Add(".aif");
-        picker.FileTypeFilter.Add(".flac");
+        foreach (var ext in AudioExtensions)
+            picker.FileTypeFilter.Add(ext);
         InitializeWithWindow.Initialize(picker, WindowHandle);
+        return picker;
+    }
 
-        var file = await picker.PickSingleFileAsync();
+    private async void OpenButton_Click(object sender, RoutedEventArgs e)
+    {
+        var file = await CreateAudioPicker().PickSingleFileAsync();
         if (file == null) return;
 
-        await LoadFileAsync(file.Path);
+        // Open keeps today's behavior (loads paused) and adds the file to the queue.
+        await AddFiles(new[] { file.Path }, select: true, autoplay: false);
+    }
+
+    // ---------- Queue ----------
+
+    private async void AddFilesButton_Click(object sender, RoutedEventArgs e)
+    {
+        var files = await CreateAudioPicker().PickMultipleFilesAsync();
+        if (files.Count == 0) return;
+        await AddFiles(files.Select(f => f.Path), select: true, autoplay: false);
+    }
+
+    private async Task AddFiles(IEnumerable<string> paths, bool select, bool autoplay)
+    {
+        var incoming = paths
+            .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p) &&
+                        AudioExtensions.Contains(Path.GetExtension(p).ToLowerInvariant()))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (incoming.Count == 0) return;
+
+        foreach (var p in incoming)
+        {
+            if (_tracks.Any(t => string.Equals(t.Path, p, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            _tracks.Add(new TrackItem(p));
+        }
+        UpdatePlaylistUi();
+
+        // Resolve durations lazily so adding stays instant.
+        foreach (var t in _tracks.Where(t => t.DurationText == "…").ToList())
+            t.DurationText = await Task.Run(() => TryGetDurationText(t.Path));
+
+        if (select)
+        {
+            var target = _tracks.LastOrDefault(t => incoming.Any(p =>
+                string.Equals(p, t.Path, StringComparison.OrdinalIgnoreCase)));
+            if (target == null) return;
+            if (ReferenceEquals(FileListView.SelectedItem, target))
+                await LoadTrackAsync(target, autoplay);
+            else
+            {
+                _playlistAutoPlay = autoplay;
+                try { FileListView.SelectedItem = target; }
+                finally { _playlistAutoPlay = true; }
+            }
+        }
+    }
+
+    private async void FileListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_playlistSync) return;
+        if (FileListView.SelectedItem is not TrackItem item) return;
+        await LoadTrackAsync(item, _playlistAutoPlay);
+    }
+
+    private async Task LoadTrackAsync(TrackItem item, bool autoplay)
+    {
+        _settings.LastFilePath = item.Path;
+        await LoadFileAsync(item.Path);
+        if (autoplay && _engine.IsLoaded && _engine.FilePath == item.Path)
+        {
+            _engine.Play();
+            PlayButton.Content = "⏸ Pause";
+        }
+    }
+
+    private void RemoveFileButton_Click(object sender, RoutedEventArgs e) => RemoveSelected();
+
+    private void RemoveSelected()
+    {
+        if (FileListView.SelectedItem is TrackItem item)
+            _tracks.Remove(item);
+        UpdatePlaylistUi();
+    }
+
+    private void ClearFilesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tracks.Count == 0) return;
+        _playlistSync = true;
+        try
+        {
+            _tracks.Clear();
+            FileListView.SelectedItem = null;
+        }
+        finally { _playlistSync = false; }
+        UpdatePlaylistUi();
+    }
+
+    private void FileListView_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Delete)
+        {
+            RemoveSelected();
+            e.Handled = true;
+        }
+    }
+
+    private void FileList_DragOver(object sender, DragEventArgs e) =>
+        e.AcceptedOperation = DataPackageOperation.Copy;
+
+    private async void FileList_Drop(object sender, DragEventArgs e)
+    {
+        try
+        {
+            if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+            var items = await e.DataView.GetStorageItemsAsync();
+            await AddFiles(items.OfType<StorageFile>().Select(f => f.Path), select: true, autoplay: false);
+        }
+        catch { /* drop is best-effort */ }
+    }
+
+    private async void PrevButton_Click(object sender, RoutedEventArgs e) => await MoveSelection(-1);
+    private async void NextButton_Click(object sender, RoutedEventArgs e) => await MoveSelection(1);
+
+    private async Task MoveSelection(int delta)
+    {
+        if (_tracks.Count == 0) return;
+        int i = FileListView.SelectedIndex;
+        i = i < 0 ? (delta > 0 ? 0 : _tracks.Count - 1) : Math.Clamp(i + delta, 0, _tracks.Count - 1);
+        if (i == FileListView.SelectedIndex && _tracks[i] is TrackItem same)
+            await LoadTrackAsync(same, autoplay: true);
+        else
+            FileListView.SelectedIndex = i; // SelectionChanged auto-plays
+    }
+
+    private void UpdatePlaylistUi()
+    {
+        if (PrevButton == null) return;
+        bool any = _tracks.Count > 0;
+        PrevButton.IsEnabled = any;
+        NextButton.IsEnabled = any;
+    }
+
+    private void CapturePlaylistState()
+    {
+        if (_settings.RememberFileList)
+            _settings.FileListPaths = _tracks.Select(t => t.Path).ToList();
+        else
+        {
+            _settings.FileListPaths = new List<string>();
+            _settings.LastFilePath = null;
+        }
+    }
+
+    private async void RestoreFileListAsync()
+    {
+        try
+        {
+            if (!_settings.RememberFileList) return;
+            var paths = _settings.FileListPaths
+                .Where(File.Exists)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (paths.Count == 0) return;
+
+            _playlistSync = true;
+            _playlistAutoPlay = false;
+            try
+            {
+                foreach (var p in paths)
+                    _tracks.Add(new TrackItem(p));
+                var last = _tracks.FirstOrDefault(t =>
+                    string.Equals(t.Path, _settings.LastFilePath, StringComparison.OrdinalIgnoreCase))
+                    ?? _tracks[^1];
+                FileListView.SelectedItem = last;
+            }
+            finally
+            {
+                _playlistSync = false;
+                _playlistAutoPlay = true;
+            }
+            UpdatePlaylistUi();
+
+            foreach (var t in _tracks.ToList())
+                t.DurationText = await Task.Run(() => TryGetDurationText(t.Path));
+
+            // Resume paused on the last track.
+            if (FileListView.SelectedItem is TrackItem selected)
+                await LoadFileAsync(selected.Path);
+        }
+        catch { /* startup restore is best-effort */ }
+    }
+
+    private static string TryGetDurationText(string path)
+    {
+        try
+        {
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            using WaveStream reader = ext == ".wav"
+                ? new WaveFileReader(path)
+                : new MediaFoundationReader(path);
+            return FormatTime(reader.TotalTime);
+        }
+        catch { return "--:--"; }
     }
 
     private async Task LoadFileAsync(string path)
@@ -748,6 +957,7 @@ public sealed partial class MainWindow : Window
         ClearLoopButton.IsEnabled = loaded;
         LoopCheckBox.IsEnabled = loaded;
         UpdateReverseUi();
+        UpdatePlaylistUi();
     }
 
     private static string FormatTime(TimeSpan t)

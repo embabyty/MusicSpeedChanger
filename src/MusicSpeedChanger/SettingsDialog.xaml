@@ -52,6 +52,7 @@
             <NumberBox x:Name="WaveformPeaksBox" Header="Waveform detail (bars, applies to next file)"
                        Minimum="100" Maximum="8000" SpinButtonPlacementMode="Inline" />
             <CheckBox x:Name="ClickToSeekBox" Content="Click / drag the waveform to seek" />
+            <CheckBox x:Name="RememberListBox" Content="Remember the queue between sessions" />
 
             <!-- Effects -->
             <TextBlock Text="Effects" Style="{StaticResource SectionHeader}" />

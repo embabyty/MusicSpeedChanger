@@ -41,6 +41,7 @@ public sealed partial class SettingsDialog : ContentDialog
         ShowEqBox.IsChecked = Draft.ShowEqPanel;
         WaveformPeaksBox.Value = Draft.WaveformPeaks;
         ClickToSeekBox.IsChecked = Draft.ClickToSeek;
+        RememberListBox.IsChecked = Draft.RememberFileList;
 
         RememberEffectsBox.IsChecked = Draft.RememberEffects;
 
@@ -68,6 +69,7 @@ public sealed partial class SettingsDialog : ContentDialog
         Draft.ShowEqPanel = ShowEqBox.IsChecked == true;
         Draft.WaveformPeaks = (int)WaveformPeaksBox.Value;
         Draft.ClickToSeek = ClickToSeekBox.IsChecked == true;
+        Draft.RememberFileList = RememberListBox.IsChecked == true;
 
         Draft.RememberEffects = RememberEffectsBox.IsChecked == true;
 

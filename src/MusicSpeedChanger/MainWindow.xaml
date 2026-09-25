@@ -69,6 +69,57 @@
 
         <!-- Main content -->
         <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="230" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Queue sidebar -->
+            <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,6,6" Padding="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Queue" Style="{StaticResource CardHeader}" />
+                    <ListView Grid.Row="1" x:Name="FileListView" SelectionMode="Single"
+                              SelectionChanged="FileListView_SelectionChanged"
+                              AllowDrop="True" DragOver="FileList_DragOver" Drop="FileList_Drop"
+                              KeyDown="FileListView_KeyDown">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="Padding" Value="4,2" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Padding="0,4">
+                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding DurationText}" FontSize="11"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button Content="＋ Add" Click="AddFilesButton_Click" Padding="8,2" />
+                        <Button Content="－" Click="RemoveFileButton_Click" Padding="8,2">
+                            <ToolTipService.ToolTip>
+                                <ToolTip Content="Remove selected" />
+                            </ToolTipService.ToolTip>
+                        </Button>
+                        <Button Content="Clear" Click="ClearFilesButton_Click" Padding="8,2" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="3" Text="Drop audio files here"
+                               FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
@@ -166,6 +217,7 @@
                     </ScrollViewer>
                 </StackPanel>
             </Border>
+            </Grid>
         </Grid>
 
         <!-- Time row -->
@@ -185,9 +237,11 @@
 
         <!-- Transport bar -->
         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+            <Button x:Name="PrevButton" Content="&#x23EE; Prev" Click="PrevButton_Click" IsEnabled="False" FontSize="14" Padding="20,8" />
             <Button x:Name="PlayButton" Content="? Play" Click="PlayButton_Click" IsEnabled="False"
                     FontSize="14" Padding="20,8" Background="#2E7D32" BorderBrush="#2E7D32" />
             <Button x:Name="StopButton" Content="? Stop" Click="StopButton_Click" IsEnabled="False" FontSize="14" Padding="20,8" />
+            <Button x:Name="NextButton" Content="Next &#x23ED;" Click="NextButton_Click" IsEnabled="False" FontSize="14" Padding="20,8" />
             <Button x:Name="ReverseButton" Content="? Reverse" Click="ReverseButton_Click" IsEnabled="False"
                     FontSize="14" Padding="20,8">
                 <ToolTipService.ToolTip>

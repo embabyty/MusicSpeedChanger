@@ -5,7 +5,7 @@
 
 #define MyAppName "Music Speed Changer"
 #define MyAppExeName "MusicSpeedChanger.exe"
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Music Speed Changer"
 
 [Setup]

@@ -16,8 +16,12 @@ project.fragment.lock.json
 artifacts/
 
 # Publish staging (recreate with: dotnet publish ... -o dist/publish)
-# NOTE: dist/ release artifacts (*.exe + installer) are intentionally
-# tracked via Git LFS — do not ignore dist/.
+# Release artifacts (*.exe + installer) are local-only — do not track.
+dist/
+*.exe
+*.msi
+installer/Output/
+installer/*.exe
 
 # OS / editor
 .DS_Store

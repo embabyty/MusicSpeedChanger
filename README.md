@@ -20,8 +20,11 @@ musicians practicing tricky sections.
   EQ stops stretch/EQ overshoot from clipping — playback and exports alike
 - **Automatic updates** — checks GitHub Releases on startup, downloads and launches the installer
 - **Settings** (⚙ in the header): update feed + manual check, default tempo/pitch and slider steps,
-  editor panel visibility, waveform detail, click-to-seek, save/restore of effects
+  editor panel visibility, waveform detail, click-to-seek, queue memory, save/restore of effects
   (tempo, pitch, volume, EQ) across sessions, and Windows accent-color matching
+- **Queue sidebar** — keep a list of audio files: add via picker or drag-and-drop,
+  click a track to load and play it, ⏮/⏭ step through the list, per-track
+  durations, Delete-key removal, list restored on startup (toggle in Settings)
 
 ## Tech
 

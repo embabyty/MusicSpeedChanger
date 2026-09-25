@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -35,6 +36,11 @@ public sealed class AppSettings
     // ----- Effects -----
     /// <summary>When true, tempo/pitch/volume/EQ are restored on startup and kept across files.</summary>
     public bool RememberEffects { get; set; } = true;
+
+    // ----- Queue -----
+    public bool RememberFileList { get; set; } = true;
+    public List<string> FileListPaths { get; set; } = new();
+    public string? LastFilePath { get; set; }
 
     // ----- Appearance -----
     public bool UseSystemAccent { get; set; } = true;
