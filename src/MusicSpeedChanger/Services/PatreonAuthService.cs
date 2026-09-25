@@ -43,7 +43,7 @@ public static class PatreonAuthService
     private const string TokenUrl = "https://www.patreon.com/api/oauth2/token";
     private const string IdentityUrl =
         "https://www.patreon.com/api/oauth2/v2/identity" +
-        "?include=memberships.campaign&fields[member]=patron_status&fields[user]=full_name";
+        "?include=memberships.campaign,campaign&fields[member]=patron_status&fields[user]=full_name";
 
     private static readonly HttpClient Http = CreateClient();
 
@@ -59,7 +59,7 @@ public static class PatreonAuthService
         string authorize =
             $"{AuthorizeUrl}?response_type=code&client_id={Uri.EscapeDataString(ClientId)}" +
             $"&redirect_uri={Uri.EscapeDataString(RedirectUri)}" +
-            $"&scope={Uri.EscapeDataString("identity identity.memberships")}" +
+            $"&scope={Uri.EscapeDataString("identity identity.memberships campaigns")}" +
             $"&state={state}";
 
         progress?.Report("Waiting for Patreon login in your browser…");
@@ -308,10 +308,22 @@ public static class PatreonAuthService
             var root = doc.RootElement;
 
             string? name = null;
-            if (root.TryGetProperty("data", out var data) &&
+            JsonElement data = default;
+            bool hasData = root.TryGetProperty("data", out data);
+            if (hasData &&
                 data.TryGetProperty("attributes", out var attrs) &&
                 attrs.TryGetProperty("full_name", out var fn))
                 name = fn.GetString();
+
+            // Creators can't pledge to their own campaign, so they have no
+            // membership — recognize the campaign owner directly instead.
+            if (hasData &&
+                data.TryGetProperty("relationships", out var dataRels) &&
+                dataRels.TryGetProperty("campaign", out var ownCampaign) &&
+                ownCampaign.TryGetProperty("data", out var ownData) &&
+                ownData.TryGetProperty("id", out var ownId) &&
+                ownId.GetString() == CampaignId)
+                return (true, name);
 
             if (root.TryGetProperty("included", out var included) &&
                 included.ValueKind == JsonValueKind.Array)
