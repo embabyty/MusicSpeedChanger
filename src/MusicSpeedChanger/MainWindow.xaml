@@ -279,8 +279,8 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Text="Reverse" Style="{StaticResource CardHeader}" VerticalAlignment="Center" Margin="0,0,0,0" />
-                                    <TextBlock x:Name="ReverseStateLabel" Text="Off" Foreground="#7C9EFF" FontWeight="SemiBold"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                     <TextBlock x:Name="ReverseStateLabel" Text="Off" Foreground="#7C9EFF" FontWeight="SemiBold"
+                                                Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     <Button x:Name="ReverseButton" Click="ReverseButton_Click" IsEnabled="False"
                                             FontSize="13" Padding="12,6" Grid.Column="2" VerticalAlignment="Center">
                                         <ToolTipService.ToolTip>
