@@ -1,6 +1,6 @@
 ; Music Speed Changer (Beta) — Inno Setup installer
 ; Installs side-by-side with the stable build: separate folder, AppId, and shortcuts.
-; Builds Setup-MusicSpeedChanger-Beta-3.0.0-beta.1.exe from the published WinUI 3 build.
+; Builds Setup-MusicSpeedChanger-Beta-3.0.0-beta.2.exe from the published WinUI 3 build.
 ; Publish first (WinUI unpackaged self-contained ships the whole folder):
 ;   dotnet publish src/MusicSpeedChanger/MusicSpeedChanger.csproj -c Release -p:Platform=x64 -o dist/publish
 ; Attach the result to a GitHub *prerelease* (e.g. tag v3.0.0-beta.1) — the in-app
@@ -8,8 +8,8 @@
 
 #define MyAppName "Music Speed Changer Beta"
 #define MyAppExeName "MusicSpeedChanger.exe"
-#define MyAppVersion "3.0.0 Beta 1"
-#define MyAppVersionFile "3.0.0-beta.1"
+#define MyAppVersion "3.0.0 Beta 2"
+#define MyAppVersionFile "3.0.0-beta.2"
 #define MyAppPublisher "EmAppleFlagship"
 
 [Setup]
