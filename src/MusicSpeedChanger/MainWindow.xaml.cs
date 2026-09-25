@@ -387,11 +387,11 @@ public sealed partial class MainWindow : Window
         else if (result == ContentDialogResult.Primary)
         {
             var statusProgress = new Progress<string>(s => StatusLabel.Text = s);
-            var account = await PatreonAuthService.LoginAsync(statusProgress);
+            var (account, error) = await PatreonAuthService.LoginAsync(statusProgress);
             if (account == null)
             {
                 StatusLabel.Text = "";
-                await ShowErrorAsync("Patreon login didn't complete, or no active membership was found.");
+                await ShowErrorAsync(error ?? "Patreon login didn't complete.");
                 return;
             }
             ApplyPatreonAccount(account);
@@ -454,10 +454,10 @@ public sealed partial class MainWindow : Window
         try
         {
             var progress = new Progress<string>(s => BetaGateStatus.Text = s);
-            var account = await PatreonAuthService.LoginAsync(progress);
+            var (account, error) = await PatreonAuthService.LoginAsync(progress);
             if (account == null)
             {
-                BetaGateStatus.Text = "Login didn't complete, or no active membership was found.";
+                BetaGateStatus.Text = error ?? "Login didn't complete.";
                 return;
             }
             ApplyPatreonAccount(account);

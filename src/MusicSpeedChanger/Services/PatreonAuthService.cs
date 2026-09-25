@@ -50,9 +50,9 @@ public static class PatreonAuthService
     /// <summary>
     /// Full login: opens the browser, waits for the loopback callback, exchanges the
     /// code, and checks for an active membership to this campaign.
-    /// Returns null when cancelled, timed out, denied, errored, or not a patron.
+    /// Error is non-null when no account comes back, so the UI can say why.
     /// </summary>
-    public static async Task<PatreonAccount?> LoginAsync(
+    public static async Task<(PatreonAccount? Account, string? Error)> LoginAsync(
         IProgress<string>? progress = null, CancellationToken ct = default)
     {
         string state = RandomHex(16);
@@ -63,17 +63,17 @@ public static class PatreonAuthService
             $"&state={state}";
 
         progress?.Report("Waiting for Patreon login in your browser…");
-        string? code = await WaitForCallbackAsync(authorize, state, progress, ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(code)) return null;
+        var (code, cbError) = await WaitForCallbackAsync(authorize, state, progress, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(code)) return (null, cbError ?? "Login didn't complete.");
 
         progress?.Report("Exchanging code for token…");
-        var account = await ExchangeCodeAsync(code, ct).ConfigureAwait(false);
-        if (account == null) return null;
+        var (account, tokError) = await ExchangeCodeAsync(code, ct).ConfigureAwait(false);
+        if (account == null) return (null, tokError ?? "Token exchange failed.");
 
         progress?.Report("Verifying membership…");
-        var (active, name) = await VerifyAsync(account.AccessToken, ct).ConfigureAwait(false);
-        if (!active) return null;
-        return account with { FullName = name };
+        var (active, name, verError) = await VerifyAsync(account.AccessToken, ct).ConfigureAwait(false);
+        if (!active) return (null, verError ?? "No active membership found for this account.");
+        return (account with { FullName = name }, null);
     }
 
     /// <summary>Silent re-verification from a stored refresh token. Null = relogin needed.</summary>
@@ -95,14 +95,14 @@ public static class PatreonAuthService
             var account = ParseTokenResponse(
                 await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
             if (account == null) return null;
-            var (active, name) = await VerifyAsync(account.AccessToken, ct).ConfigureAwait(false);
+            var (active, name, _) = await VerifyAsync(account.AccessToken, ct).ConfigureAwait(false);
             return active ? account with { FullName = name } : null;
         }
         catch { return null; }
     }
 
-    /// <summary>True when the token belongs to an active patron of this campaign.</summary>
-    public static async Task<(bool IsActive, string? FullName)> VerifyAsync(
+    /// <summary>Active patron (or campaign owner) check. Error explains a failed call.</summary>
+    public static async Task<(bool IsActive, string? FullName, string? Error)> VerifyAsync(
         string accessToken, CancellationToken ct = default)
     {
         try
@@ -110,30 +110,38 @@ public static class PatreonAuthService
             using var req = new HttpRequestMessage(HttpMethod.Get, IdentityUrl);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             using var resp = await Http.SendAsync(req, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return (false, null);
-            return ParseIdentity(
+            if (!resp.IsSuccessStatusCode)
+                return (false, null, $"Membership check failed (HTTP {(int)resp.StatusCode}).");
+            var (active, name) = ParseIdentity(
                 await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+            return (active, name, null);
         }
-        catch { return (false, null); }
+        catch { return (false, null, "Membership check failed (network error)."); }
     }
 
     // ---------- Loopback callback (plain TCP: no admin URL-ACL needed) ----------
 
-    private static async Task<string?> WaitForCallbackAsync(
+    private static async Task<(string? Code, string? Error)> WaitForCallbackAsync(
         string authorizeUrl, string state, IProgress<string>? progress, CancellationToken ct)
     {
         var listener = new TcpListener(IPAddress.Loopback, CallbackPort);
         try { listener.Start(); }
         catch
         {
-            progress?.Report($"Couldn't open local port {CallbackPort} for Patreon login.");
-            return null;
+            string msg = $"Couldn't open local port {CallbackPort} — is another login already running?";
+            progress?.Report(msg);
+            return (null, msg);
         }
 
         try
         {
             try { await Windows.System.Launcher.LaunchUriAsync(new Uri(authorizeUrl)); }
-            catch { progress?.Report("Couldn't open your browser for Patreon login."); return null; }
+            catch
+            {
+                const string msg = "Couldn't open your browser for Patreon login.";
+                progress?.Report(msg);
+                return (null, msg);
+            }
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
@@ -148,21 +156,22 @@ public static class PatreonAuthService
                     try { listener.Stop(); } catch { /* ignore */ }
                     _ = acceptTask.ContinueWith(
                         t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
-                    progress?.Report("Patreon login timed out.");
-                    return null;
+                    const string msg = "Patreon login timed out after 3 minutes.";
+                    progress?.Report(msg);
+                    return (null, msg);
                 }
                 using var client = await acceptTask.ConfigureAwait(false);
-                var (done, code) = await HandleCallbackAsync(client, state, linked.Token).ConfigureAwait(false);
-                if (done) return code; // code set, or user denied (null)
+                var (done, code, error) = await HandleCallbackAsync(client, state, linked.Token).ConfigureAwait(false);
+                if (done) return (code, error);
             }
         }
-        catch (OperationCanceledException) { return null; }
-        catch { return null; }
+        catch (OperationCanceledException) { return (null, "Patreon login was cancelled."); }
+        catch { return (null, "Login didn't complete."); }
         finally { try { listener.Stop(); } catch { /* ignore */ } }
     }
 
-    /// <returns>(done, code): done=false keeps waiting (e.g. favicon); done=true ends it.</returns>
-    private static async Task<(bool done, string? code)> HandleCallbackAsync(
+    /// <returns>(done, code, error): done=false keeps waiting (e.g. favicon).</returns>
+    private static async Task<(bool done, string? code, string? error)> HandleCallbackAsync(
         TcpClient client, string state, CancellationToken ct)
     {
         try
@@ -195,7 +204,7 @@ public static class PatreonAuthService
                     await WritePageAsync(stream, "Music Speed Changer",
                         "Patreon login was cancelled — you can close this tab and return to the app.", ct)
                         .ConfigureAwait(false);
-                    return (true, null);
+                    return (true, null, "Patreon login was denied.");
                 }
                 if (query.TryGetValue("code", out var code) &&
                     query.TryGetValue("state", out var gotState) &&
@@ -205,19 +214,19 @@ public static class PatreonAuthService
                     await WritePageAsync(stream, "Music Speed Changer",
                         "Patreon login complete — you can close this tab and return to the app.", ct)
                         .ConfigureAwait(false);
-                    return (true, code);
+                    return (true, code, null);
                 }
                 await WritePageAsync(stream, "Music Speed Changer",
                     "Invalid login response — you can close this tab and try again.", ct)
                     .ConfigureAwait(false);
-                return (true, null);
+                return (true, null, "Invalid response from Patreon — please try again.");
             }
 
             await WritePageAsync(stream, "Music Speed Changer", "Not found.", ct, "404 Not Found")
                 .ConfigureAwait(false);
-            return (false, null);
+            return (false, null, null);
         }
-        catch { return (false, null); }
+        catch { return (false, null, null); }
     }
 
     private static async Task WritePageAsync(
@@ -255,7 +264,8 @@ public static class PatreonAuthService
 
     // ---------- Token + identity ----------
 
-    private static async Task<PatreonAccount?> ExchangeCodeAsync(string code, CancellationToken ct)
+    private static async Task<(PatreonAccount? Account, string? Error)> ExchangeCodeAsync(
+        string code, CancellationToken ct)
     {
         try
         {
@@ -268,11 +278,45 @@ public static class PatreonAuthService
                 ["redirect_uri"] = RedirectUri,
             });
             using var resp = await Http.PostAsync(TokenUrl, form, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return null;
-            return ParseTokenResponse(
+            if (!resp.IsSuccessStatusCode)
+            {
+                string detail = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                string reason = TryGetPatreonError(detail) ?? "unknown error";
+                return (null, $"Token exchange failed (HTTP {(int)resp.StatusCode}): {reason}.");
+            }
+            var account = ParseTokenResponse(
                 await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+            return account != null
+                ? (account, null)
+                : (null, "Token exchange returned an unusable response.");
         }
-        catch { return null; }
+        catch { return (null, "Token exchange failed (network error)."); }
+    }
+
+    /// <summary>Pulls Patreon's error_description out of an error payload, if present.</summary>
+    private static string? TryGetPatreonError(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("error_description", out var desc) &&
+                !string.IsNullOrWhiteSpace(desc.GetString()))
+                return desc.GetString()!.Trim();
+            if (root.TryGetProperty("error", out var err) &&
+                !string.IsNullOrWhiteSpace(err.GetString()))
+                return err.GetString()!.Trim();
+            if (root.TryGetProperty("errors", out var errors) &&
+                errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
+            {
+                var first = errors[0];
+                if (first.TryGetProperty("detail", out var detail) &&
+                    !string.IsNullOrWhiteSpace(detail.GetString()))
+                    return detail.GetString()!.Trim();
+            }
+        }
+        catch { /* not JSON — fall through */ }
+        return json.Length <= 160 ? json.Trim() : null;
     }
 
     private static PatreonAccount? ParseTokenResponse(string json)

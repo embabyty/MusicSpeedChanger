@@ -128,10 +128,10 @@ public sealed partial class SettingsDialog : ContentDialog
         try
         {
             var progress = new Progress<string>(s => PatreonStatusLabel.Text = s);
-            var account = await PatreonAuthService.LoginAsync(progress);
+            var (account, error) = await PatreonAuthService.LoginAsync(progress);
             if (account == null)
             {
-                PatreonStatusLabel.Text = "Login didn't complete, or no active membership was found.";
+                PatreonStatusLabel.Text = error ?? "Login didn't complete.";
                 return;
             }
             Draft.BetaAccessUnlocked = true;
