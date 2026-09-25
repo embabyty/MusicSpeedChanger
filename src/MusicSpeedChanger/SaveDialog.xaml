@@ -1,0 +1,27 @@
+<ContentDialog
+    x:Class="MusicSpeedChanger.SaveDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Save Edited Audio"
+    PrimaryButtonText="Save"
+    CloseButtonText="Cancel"
+    DefaultButton="Primary">
+
+    <StackPanel MinWidth="420" Spacing="4">
+        <TextBox x:Name="FileNameBox" Header="New Filename" />
+        <ComboBox x:Name="EncodingBox" Header="Encoding" HorizontalAlignment="Stretch">
+            <ComboBoxItem Content="WAV (wav)" Tag="wav" IsSelected="True" />
+        </ComboBox>
+
+        <TextBlock Text="Loop Extraction"
+                   FontWeight="SemiBold" FontSize="15" Margin="0,12,0,4" />
+        <ToggleSwitch x:Name="SaveLoopOnlySwitch" Header="Save Loop Only"
+                      Toggled="SaveLoopOnlySwitch_Toggled" />
+        <NumberBox x:Name="LoopRepeatBox" Header="Loop Repeat (iterations)"
+                   Minimum="1" Maximum="1000" Value="1"
+                   SpinButtonPlacementMode="Inline" />
+        <TextBlock x:Name="NoLoopHint" Text="Set an AB loop to enable loop extraction."
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   TextWrapping="Wrap" Visibility="Collapsed" />
+    </StackPanel>
+</ContentDialog>

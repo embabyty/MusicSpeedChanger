@@ -59,7 +59,7 @@
         <!-- Header -->
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
             <Button x:Name="OpenButton" Content="&#x1F4C2; Open�" Click="OpenButton_Click" FontWeight="SemiBold" />
-            <Button x:Name="ExportButton" Content="&#x1F4BE; Export WAV�" Click="ExportButton_Click" IsEnabled="False" />
+            <Button x:Name="ExportButton" Content="&#x1F4BE; Save" Click="ExportButton_Click" IsEnabled="False" />
             <Button x:Name="SettingsButton" Content="? Settings" Click="SettingsButton_Click" />
             <TextBlock x:Name="FileLabel" Text="No file loaded" VerticalAlignment="Center" Margin="12,0"
                        Foreground="#B8B8D0" TextTrimming="CharacterEllipsis" />

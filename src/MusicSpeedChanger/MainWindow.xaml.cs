@@ -880,12 +880,26 @@ public sealed partial class MainWindow : Window
     private async void ExportButton_Click(object sender, RoutedEventArgs e)
     {
         if (!_engine.IsLoaded || _exporting) return;
+
+        bool hasLoop = _engine.LoopA.HasValue && _engine.LoopB.HasValue && _engine.LoopB > _engine.LoopA;
+        string suggested = Path.GetFileNameWithoutExtension(_engine.FileName ?? "track")
+                    + $"_{TempoSlider.Value:0}pct_{(PitchSlider.Value >= 0 ? "+" : "")}{PitchSlider.Value:0.0}st"
+                    + (_engine.EqEnabled && !_engine.EqIsFlat ? "_eq" : "");
+
+        var saveDialog = new SaveDialog(SaveDialog.SanitizeFileName(suggested), hasLoop)
+        {
+            XamlRoot = Content.XamlRoot,
+        };
+        if (await saveDialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        string chosenName = SaveDialog.SanitizeFileName(saveDialog.FileName);
+        bool saveLoopOnly = hasLoop && saveDialog.SaveLoopOnly;
+        int repeat = saveLoopOnly ? saveDialog.LoopRepeat : 1;
+
         var picker = new FileSavePicker
         {
             SuggestedStartLocation = PickerLocationId.MusicLibrary,
-            SuggestedFileName = Path.GetFileNameWithoutExtension(_engine.FileName ?? "track")
-                        + $"_{TempoSlider.Value:0}pct_{(PitchSlider.Value >= 0 ? "+" : "")}{PitchSlider.Value:0.0}st"
-                        + (_engine.EqEnabled && !_engine.EqIsFlat ? "_eq" : ""),
+            SuggestedFileName = chosenName,
         };
         picker.FileTypeChoices.Add("WAV audio", new List<string> { ".wav" });
         InitializeWithWindow.Initialize(picker, WindowHandle);
@@ -900,24 +914,24 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            // Export loop region if fully set, else whole track.
+            // Save loop region when requested, else whole track.
             TimeSpan? from = null, to = null;
-            if (_engine.LoopA.HasValue && _engine.LoopB.HasValue && _engine.LoopB > _engine.LoopA)
+            if (saveLoopOnly)
             { from = _engine.LoopA; to = _engine.LoopB; }
 
-            var progress = new Progress<double>(p => StatusLabel.Text = $"Exporting… {p * 100:0}%");
-            StatusLabel.Text = "Exporting…";
+            var progress = new Progress<double>(p => StatusLabel.Text = $"Saving… {p * 100:0}%");
+            StatusLabel.Text = "Saving…";
             // StorageFile may be brokered — use cached path when available, else the picked path.
             string dest = file.Path;
             if (string.IsNullOrEmpty(dest))
-                dest = picker.SuggestedFileName + ".wav";
-            await _engine.ExportWavAsync(dest, TempoSlider.Value / 100.0, PitchSlider.Value, from, to, progress);
-            StatusLabel.Text = $"Exported ✓ {Path.GetFileName(dest)}";
+                dest = chosenName + ".wav";
+            await _engine.ExportWavAsync(dest, TempoSlider.Value / 100.0, PitchSlider.Value, from, to, progress, repeat);
+            StatusLabel.Text = $"Saved ✓ {Path.GetFileName(dest)}";
         }
         catch (Exception ex)
         {
-            await ShowErrorAsync($"Export failed:\n{ex.Message}");
-            StatusLabel.Text = "Export failed";
+            await ShowErrorAsync($"Save failed:\n{ex.Message}");
+            StatusLabel.Text = "Save failed";
         }
         finally
         {

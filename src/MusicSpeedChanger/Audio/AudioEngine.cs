@@ -350,93 +350,110 @@ public sealed class AudioEngine : IDisposable
 
     /// <summary>
     /// Render current tempo/pitch settings to a WAV file (16-bit PCM, same rate/channels).
-    /// Runs on a background thread.
+    /// Runs on a background thread. <paramref name="repeatCount"/> repeats the
+    /// rendered segment N times (loop-repeat savings).
     /// </summary>
     public Task ExportWavAsync(string destination, double tempo, double pitchSemitones,
-        TimeSpan? from = null, TimeSpan? to = null, IProgress<double>? progress = null)
+        TimeSpan? from = null, TimeSpan? to = null, IProgress<double>? progress = null, int repeatCount = 1)
     {
         if (!IsLoaded || FilePath == null) throw new InvalidOperationException("No file loaded.");
         string src = FilePath;
         float[] eqGains = GetEqGains();
         bool eqOn = EqEnabled;
+        int repeats = Math.Clamp(repeatCount, 1, 1000);
         return Task.Run(() =>
         {
-            using var reader = CreateReader(src);
-            long totalBytes = reader.Length;
-            if (from.HasValue)
-                reader.CurrentTime = Clamp(from.Value, TimeSpan.Zero, reader.TotalTime);
-            long endPos = to.HasValue
-                ? reader.WaveFormat.AverageBytesPerSecond >= 0
-                    ? Math.Min(totalBytes, reader.Position + (long)((to.Value - reader.CurrentTime).TotalSeconds * reader.WaveFormat.AverageBytesPerSecond))
-                    : totalBytes
-                : totalBytes;
-            // Simpler: compute end time then compare CurrentTime each loop.
-            TimeSpan endTime = to ?? reader.TotalTime;
-
-            var sample = reader.ToSampleProvider();
-            double exportTempo = Math.Clamp(tempo, 0.25, 3.0);
-            var st = new SoundTouchProcessor
+            // Probe once for the output format (rate/channels).
+            int outChannels, outRate;
+            using (var probe = CreateReader(src))
             {
-                Channels = sample.WaveFormat.Channels,
-                SampleRate = sample.WaveFormat.SampleRate,
-                Tempo = exportTempo,
-                PitchSemiTones = Math.Clamp(pitchSemitones, -12.0, 12.0)
-            };
-            SoundTouchSampleProvider.ConfigureQuality(st);
-            if (exportTempo < 0.65)
-                SoundTouchSampleProvider.ConfigureSlowStretch(st);
-            int channels = sample.WaveFormat.Channels;
-
-            // Mirror of the realtime EQ stage (bypassed when flat/disabled).
-            var eq = new GraphicEqualizer(sample.WaveFormat.SampleRate, channels);
-            eq.SetGains(eqGains);
-            bool useEq = eqOn && !eq.IsFlat;
-
-            // Mirror of the realtime limiter stage.
-            var limiter = new LimiterSampleProvider(sample.WaveFormat);
-
-            var outFormat = new WaveFormat(sample.WaveFormat.SampleRate, sample.WaveFormat.Channels);
-            using var writer = new WaveFileWriter(destination, outFormat);
-
-            float[] readBuf = new float[8192 * sample.WaveFormat.Channels];
-            float[] outBuf = new float[8192 * sample.WaveFormat.Channels];
-            long startPos = reader.Position;
-
-            while (true)
-            {
-                if (reader.CurrentTime >= endTime) break;
-                int read = sample.Read(readBuf, 0, readBuf.Length);
-                if (read == 0) break;
-                st.PutSamples(new ReadOnlySpan<float>(readBuf, 0, read), read / sample.WaveFormat.Channels);
-
-                int received;
-                do
-                {
-                    received = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
-                    if (received > 0)
-                    {
-                        if (useEq) eq.Process(outBuf, 0, received * channels);
-                        limiter.Process(outBuf, 0, received * sample.WaveFormat.Channels);
-                        writer.WriteSamples(outBuf, 0, received * sample.WaveFormat.Channels);
-                    }
-                } while (received > 0);
-
-                if (totalBytes > startPos && endPos > startPos)
-                    progress?.Report((double)(reader.Position - startPos) / (endPos - startPos));
+                var pf = probe.ToSampleProvider().WaveFormat;
+                outChannels = pf.Channels;
+                outRate = pf.SampleRate;
             }
 
-            st.Flush();
-            int tail;
-            do
+            double exportTempo = Math.Clamp(tempo, 0.25, 3.0);
+            double exportPitch = Math.Clamp(pitchSemitones, -12.0, 12.0);
+
+            var outFormat = new WaveFormat(outRate, outChannels);
+            using var writer = new WaveFileWriter(destination, outFormat);
+
+            float[] readBuf = new float[8192 * outChannels];
+            float[] outBuf = new float[8192 * outChannels];
+
+            for (int iter = 0; iter < repeats; iter++)
             {
-                tail = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
-                if (tail > 0)
+                using var reader = CreateReader(src);
+                long totalBytes = reader.Length;
+                if (from.HasValue)
+                    reader.CurrentTime = Clamp(from.Value, TimeSpan.Zero, reader.TotalTime);
+                long endPos = to.HasValue
+                    ? reader.WaveFormat.AverageBytesPerSecond >= 0
+                        ? Math.Min(totalBytes, reader.Position + (long)((to.Value - reader.CurrentTime).TotalSeconds * reader.WaveFormat.AverageBytesPerSecond))
+                        : totalBytes
+                    : totalBytes;
+                // Simpler: compute end time then compare CurrentTime each loop.
+                TimeSpan endTime = to ?? reader.TotalTime;
+
+                var sample = reader.ToSampleProvider();
+                var st = new SoundTouchProcessor
                 {
-                    if (useEq) eq.Process(outBuf, 0, tail * channels);
-                    limiter.Process(outBuf, 0, tail * sample.WaveFormat.Channels);
-                    writer.WriteSamples(outBuf, 0, tail * sample.WaveFormat.Channels);
+                    Channels = sample.WaveFormat.Channels,
+                    SampleRate = sample.WaveFormat.SampleRate,
+                    Tempo = exportTempo,
+                    PitchSemiTones = exportPitch
+                };
+                SoundTouchSampleProvider.ConfigureQuality(st);
+                if (exportTempo < 0.65)
+                    SoundTouchSampleProvider.ConfigureSlowStretch(st);
+                int channels = sample.WaveFormat.Channels;
+
+                // Mirror of the realtime EQ stage (bypassed when flat/disabled).
+                var eq = new GraphicEqualizer(sample.WaveFormat.SampleRate, channels);
+                eq.SetGains(eqGains);
+                bool useEq = eqOn && !eq.IsFlat;
+
+                // Mirror of the realtime limiter stage.
+                var limiter = new LimiterSampleProvider(sample.WaveFormat);
+
+                long startPos = reader.Position;
+
+                while (true)
+                {
+                    if (reader.CurrentTime >= endTime) break;
+                    int read = sample.Read(readBuf, 0, readBuf.Length);
+                    if (read == 0) break;
+                    st.PutSamples(new ReadOnlySpan<float>(readBuf, 0, read), read / sample.WaveFormat.Channels);
+
+                    int received;
+                    do
+                    {
+                        received = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
+                        if (received > 0)
+                        {
+                            if (useEq) eq.Process(outBuf, 0, received * channels);
+                            limiter.Process(outBuf, 0, received * sample.WaveFormat.Channels);
+                            writer.WriteSamples(outBuf, 0, received * sample.WaveFormat.Channels);
+                        }
+                    } while (received > 0);
+
+                    if (totalBytes > startPos && endPos > startPos)
+                        progress?.Report((iter + (double)(reader.Position - startPos) / (endPos - startPos)) / repeats);
                 }
-            } while (tail > 0);
+
+                st.Flush();
+                int tail;
+                do
+                {
+                    tail = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
+                    if (tail > 0)
+                    {
+                        if (useEq) eq.Process(outBuf, 0, tail * channels);
+                        limiter.Process(outBuf, 0, tail * sample.WaveFormat.Channels);
+                        writer.WriteSamples(outBuf, 0, tail * sample.WaveFormat.Channels);
+                    }
+                } while (tail > 0);
+            }
         });
     }
 
