@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using NAudio.Wave;
@@ -20,15 +21,16 @@ public sealed class AudioEngine : IDisposable
     private float[]? _reverseData;            // decoded file cache (per loaded file)
     private WaveFormat? _reverseFormat;
     private SoundTouchSampleProvider? _processor;
-    private EqualizerSampleProvider? _eq;
+    private EffectsChainProvider? _chain;
     private ISampleProvider? _volumeProvider;
     private bool _disposed;
 
     /// <summary>When true, playback runs backwards from the current position.</summary>
     public bool Reverse { get; private set; }
 
-    // EQ settings persist across file loads.
-    private readonly float[] _eqGains = new float[GraphicEqualizer.BandCount];
+    // Effects chain persists across file loads.
+    private readonly List<EffectBlock> _effects = new();
+    private readonly object _fxLock = new();
 
     public string? FilePath { get; private set; }
     public string? FileName => FilePath == null ? null : Path.GetFileName(FilePath);
@@ -54,71 +56,214 @@ public sealed class AudioEngine : IDisposable
         set { if (_processor != null) _processor.PitchSemitones = value; }
     }
 
-    // ----- 31-band equalizer -----
+    // ----- Effects chain (Equalizer APO style) -----
 
-    /// <summary>When false, the EQ stage is bypassed (playback and export).</summary>
-    public bool EqEnabled
+    /// <summary>Deep-copy snapshot of the blocks (safe to hand to UI/settings).</summary>
+    public List<EffectBlock> SnapshotEffects()
     {
-        get => _eqEnabled;
-        set { _eqEnabled = value; if (_eq != null) _eq.Enabled = value; }
-    }
-    private bool _eqEnabled = true;
-
-    public float GetEqGain(int band)
-    {
-        CheckEqBand(band);
-        return _eqGains[band];
-    }
-
-    public void SetEqGain(int band, float gainDb)
-    {
-        CheckEqBand(band);
-        gainDb = Math.Clamp(gainDb, GraphicEqualizer.MinGainDb, GraphicEqualizer.MaxGainDb);
-        _eqGains[band] = gainDb;
-        _eq?.Equalizer.SetGain(band, gainDb);
-    }
-
-    public float[] GetEqGains()
-    {
-        var copy = new float[GraphicEqualizer.BandCount];
-        Array.Copy(_eqGains, copy, copy.Length);
-        return copy;
-    }
-
-    public void SetEqGains(float[] gains)
-    {
-        if (gains == null) throw new ArgumentNullException(nameof(gains));
-        if (gains.Length != GraphicEqualizer.BandCount)
-            throw new ArgumentException($"Need {GraphicEqualizer.BandCount} gains.", nameof(gains));
-        for (int i = 0; i < gains.Length; i++)
-            _eqGains[i] = Math.Clamp(gains[i], GraphicEqualizer.MinGainDb, GraphicEqualizer.MaxGainDb);
-        _eq?.Equalizer.SetGains(_eqGains);
-    }
-
-    public void ResetEq()
-    {
-        Array.Clear(_eqGains, 0, _eqGains.Length);
-        _eq?.Equalizer.Reset();
-    }
-
-    public bool EqIsFlat
-    {
-        get
+        lock (_fxLock)
         {
-            for (int i = 0; i < _eqGains.Length; i++)
-                if (Math.Abs(_eqGains[i]) > 0.001f) return false;
-            return true;
+            var copy = new List<EffectBlock>(_effects.Count);
+            foreach (var b in _effects) copy.Add(b.Clone());
+            return copy;
         }
     }
 
-    private static void CheckEqBand(int band)
+    /// <summary>Replace the whole chain (startup restore). Unknown kinds are dropped.</summary>
+    public void ReplaceEffects(IEnumerable<EffectBlock>? blocks)
     {
-        if (band < 0 || band >= GraphicEqualizer.BandCount)
-            throw new ArgumentOutOfRangeException(nameof(band));
+        lock (_fxLock)
+        {
+            _effects.Clear();
+            if (blocks != null)
+                foreach (var b in blocks)
+                {
+                    var clean = SanitizeBlock(b);
+                    if (clean != null) _effects.Add(clean);
+                }
+        }
+        PushEffectsToChain();
+    }
+
+    /// <summary>True when any enabled block audibly does something (playback and export).</summary>
+    public bool EffectsActive
+    {
+        get
+        {
+            lock (_fxLock)
+            {
+                foreach (var b in _effects)
+                    if (b.IsActiveContent) return true;
+                return false;
+            }
+        }
+    }
+
+    public int AddEffect(EffectBlock block)
+    {
+        var clean = SanitizeBlock(block) ?? EffectBlock.NewEq();
+        int index;
+        lock (_fxLock) { _effects.Add(clean); index = _effects.Count - 1; }
+        PushEffectsToChain();
+        return index;
+    }
+
+    public void RemoveEffectAt(int index)
+    {
+        lock (_fxLock)
+        {
+            if (index < 0 || index >= _effects.Count) return;
+            _effects.RemoveAt(index);
+        }
+        // Indices shifted — full rebuild.
+        PushEffectsToChain();
+    }
+
+    public void MoveEffect(int from, int to)
+    {
+        lock (_fxLock)
+        {
+            if (from < 0 || from >= _effects.Count || to < 0 || to >= _effects.Count || from == to) return;
+            var b = _effects[from];
+            _effects.RemoveAt(from);
+            _effects.Insert(to, b);
+        }
+        PushEffectsToChain();
+    }
+
+    public void SetEffectEnabled(int index, bool enabled)
+    {
+        lock (_fxLock)
+        {
+            if (index < 0 || index >= _effects.Count) return;
+            _effects[index].Enabled = enabled;
+        }
+        PushEffectsToChain();
+    }
+
+    public void SetEffectBands(int index, int bands)
+    {
+        bands = bands == GraphicEqualizer.BandCount15 ? bands : GraphicEqualizer.BandCount;
+        lock (_fxLock)
+        {
+            if (index < 0 || index >= _effects.Count) return;
+            var b = _effects[index];
+            if (b.IsPreamp || b.Bands == bands) return;
+            var dstFreqs = GraphicEqualizer.CentersForBands(bands);
+            var srcFreqs = GraphicEqualizer.CentersForBands(b.Bands);
+            b.Gains = GraphicEqualizer.ResampleGains(srcFreqs, PadGains(b.Gains, b.Bands), dstFreqs);
+            b.Bands = bands;
+            b.Preset = "";
+        }
+        PushEffectsToChain();
+    }
+
+    public void SetEffectGain(int index, int band, float gainDb)
+    {
+        gainDb = Math.Clamp(gainDb, GraphicEqualizer.MinGainDb, GraphicEqualizer.MaxGainDb);
+        lock (_fxLock)
+        {
+            if (index < 0 || index >= _effects.Count) return;
+            var b = _effects[index];
+            if (b.IsPreamp || b.Gains == null || band < 0 || band >= b.Bands) return;
+            b.Gains = PadGains(b.Gains, b.Bands);
+            b.Gains[band] = gainDb;
+            b.Preset = "";
+        }
+        _chain?.SetBlockGain(index, band, gainDb);
+    }
+
+    public void SetEffectGains(int index, float[] gains, string preset = "")
+    {
+        if (gains == null) return;
+        lock (_fxLock)
+        {
+            if (index < 0 || index >= _effects.Count) return;
+            var b = _effects[index];
+            if (b.IsPreamp) return;
+            var dst = new float[b.Bands];
+            if (gains.Length == b.Bands)
+                Array.Copy(gains, dst, b.Bands);
+            else
+                dst = GraphicEqualizer.ResampleGains(
+                    GraphicEqualizer.CentersForBands(gains.Length == GraphicEqualizer.BandCount15
+                        ? GraphicEqualizer.BandCount15 : GraphicEqualizer.BandCount),
+                    PadGains(gains, gains.Length),
+                    GraphicEqualizer.CentersForBands(b.Bands));
+            for (int i = 0; i < dst.Length; i++)
+                dst[i] = Math.Clamp(dst[i], GraphicEqualizer.MinGainDb, GraphicEqualizer.MaxGainDb);
+            b.Gains = dst;
+            b.Preset = preset ?? "";
+        }
+        PushEffectsToChain();
+    }
+
+    public void ResetEffect(int index)
+    {
+        lock (_fxLock)
+        {
+            if (index < 0 || index >= _effects.Count) return;
+            var b = _effects[index];
+            if (b.IsPreamp) b.PreampDb = 0;
+            else { b.Gains = new float[b.Bands]; b.Preset = "Flat"; }
+        }
+        PushEffectsToChain();
+    }
+
+    public void SetPreampDb(int index, float gainDb)
+    {
+        gainDb = Math.Clamp(gainDb, -20f, 20f);
+        lock (_fxLock)
+        {
+            if (index < 0 || index >= _effects.Count) return;
+            var b = _effects[index];
+            if (!b.IsPreamp) return;
+            b.PreampDb = gainDb;
+        }
+        _chain?.SetPreampDb(index, gainDb);
+    }
+
+    private void PushEffectsToChain()
+    {
+        EffectsChainProvider? chain = _chain;
+        if (chain == null) return;
+        chain.Rebuild(SnapshotEffects());
+    }
+
+    private static float[] PadGains(float[]? gains, int bands)
+    {
+        var dst = new float[bands];
+        if (gains != null)
+            Array.Copy(gains, dst, Math.Min(gains.Length, bands));
+        return dst;
+    }
+
+    private static EffectBlock? SanitizeBlock(EffectBlock? b)
+    {
+        if (b == null) return null;
+        if (b.IsPreamp)
+        {
+            var pre = EffectBlock.NewPreamp(b.PreampDb);
+            pre.Enabled = b.Enabled;
+            return pre;
+        }
+        int bands = b.Bands == GraphicEqualizer.BandCount15
+            ? GraphicEqualizer.BandCount15 : GraphicEqualizer.BandCount;
+        return new EffectBlock
+        {
+            Kind = "eq",
+            Enabled = b.Enabled,
+            Bands = bands,
+            Gains = PadGains(b.Gains, bands),
+            Preset = b.Preset ?? "",
+        };
     }
 
     /// <summary>Source (input) duration, unaffected by tempo.</summary>
     public TimeSpan SourceDuration => _reader?.TotalTime ?? TimeSpan.Zero;
+
+    /// <summary>Source sample rate for display math (48 kHz fallback when unloaded).</summary>
+    public int SourceSampleRate => _reader?.WaveFormat.SampleRate ?? 48000;
 
     /// <summary>Effective output duration at current tempo.</summary>
     public TimeSpan OutputDuration =>
@@ -212,11 +357,10 @@ public sealed class AudioEngine : IDisposable
             Tempo = tempo,
             PitchSemitones = pitch
         };
-        _eq = new EqualizerSampleProvider(_processor);
-        _eq.Equalizer.SetGains(_eqGains);
-        _eq.Enabled = EqEnabled;
-        // Limiter sits post-EQ so stretch overshoot + EQ boosts never clip the DAC.
-        var limiter = new LimiterSampleProvider(_eq);
+        _chain = new EffectsChainProvider(_processor);
+        _chain.Rebuild(SnapshotEffects());
+        // Limiter sits post-effects so stretch overshoot + EQ boosts never clip the DAC.
+        var limiter = new LimiterSampleProvider(_chain!);
         _volumeProvider = new VolumeSampleProvider(limiter) { Volume = 1f };
 
         _output = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 3 };
@@ -298,7 +442,7 @@ public sealed class AudioEngine : IDisposable
         }
         _processor = null;
         _volumeProvider = null;
-        _eq = null;
+        _chain = null;
         _sampleSource = null;
         _reverse = null;
         _reverseData = null;
@@ -358,8 +502,7 @@ public sealed class AudioEngine : IDisposable
     {
         if (!IsLoaded || FilePath == null) throw new InvalidOperationException("No file loaded.");
         string src = FilePath;
-        float[] eqGains = GetEqGains();
-        bool eqOn = EqEnabled;
+        List<EffectBlock> fx = SnapshotEffects();
         int repeats = Math.Clamp(repeatCount, 1, 1000);
         return Task.Run(() =>
         {
@@ -408,10 +551,11 @@ public sealed class AudioEngine : IDisposable
                     SoundTouchSampleProvider.ConfigureSlowStretch(st);
                 int channels = sample.WaveFormat.Channels;
 
-                // Mirror of the realtime EQ stage (bypassed when flat/disabled).
-                var eq = new GraphicEqualizer(sample.WaveFormat.SampleRate, channels);
-                eq.SetGains(eqGains);
-                bool useEq = eqOn && !eq.IsFlat;
+                // Mirror of the realtime effects stage (same order, same settings).
+                // The provider wraps the live sample stream; here we only use
+                // Rebuild + ProcessBuffer on render buffers.
+                var fxChain = new EffectsChainProvider(sample);
+                fxChain.Rebuild(fx);
 
                 // Mirror of the realtime limiter stage.
                 var limiter = new LimiterSampleProvider(sample.WaveFormat);
@@ -428,13 +572,13 @@ public sealed class AudioEngine : IDisposable
                     int received;
                     do
                     {
-                        received = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
-                        if (received > 0)
-                        {
-                            if (useEq) eq.Process(outBuf, 0, received * channels);
-                            limiter.Process(outBuf, 0, received * sample.WaveFormat.Channels);
-                            writer.WriteSamples(outBuf, 0, received * sample.WaveFormat.Channels);
-                        }
+                    received = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
+                    if (received > 0)
+                    {
+                        fxChain.ProcessBuffer(outBuf, 0, received * channels);
+                        limiter.Process(outBuf, 0, received * sample.WaveFormat.Channels);
+                        writer.WriteSamples(outBuf, 0, received * sample.WaveFormat.Channels);
+                    }
                     } while (received > 0);
 
                     if (totalBytes > startPos && endPos > startPos)
@@ -445,13 +589,13 @@ public sealed class AudioEngine : IDisposable
                 int tail;
                 do
                 {
-                    tail = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
-                    if (tail > 0)
-                    {
-                        if (useEq) eq.Process(outBuf, 0, tail * channels);
-                        limiter.Process(outBuf, 0, tail * sample.WaveFormat.Channels);
-                        writer.WriteSamples(outBuf, 0, tail * sample.WaveFormat.Channels);
-                    }
+                tail = st.ReceiveSamples(new Span<float>(outBuf), outBuf.Length / sample.WaveFormat.Channels);
+                if (tail > 0)
+                {
+                    fxChain.ProcessBuffer(outBuf, 0, tail * channels);
+                    limiter.Process(outBuf, 0, tail * sample.WaveFormat.Channels);
+                    writer.WriteSamples(outBuf, 0, tail * sample.WaveFormat.Channels);
+                }
                 } while (tail > 0);
             }
         });

@@ -19,6 +19,7 @@ using Windows.System;
 using Windows.UI.ViewManagement;
 using WinRT.Interop;
 using MusicSpeedChanger.Audio;
+using MusicSpeedChanger.Controls;
 using MusicSpeedChanger.Services;
 
 namespace MusicSpeedChanger;
@@ -33,9 +34,11 @@ public sealed partial class MainWindow : Window
     private bool _updatingSeek;
     private bool _exporting;
 
-    // ----- Equalizer UI state -----
-    private readonly Slider[] _eqSliders = new Slider[GraphicEqualizer.BandCount];
-    private bool _updatingEq;
+    // ----- Navigation -----
+    private Brush? _navIdleBackground;
+
+    // ----- Effects chain UI state (EQ view) -----
+    private bool _rebuildingFx;
 
     // ----- Settings / appearance / updates -----
     private readonly AppSettings _settings = AppSettings.Load();
@@ -45,10 +48,21 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<TrackItem> _tracks = new();
     private bool _playlistSync;
     private bool _playlistAutoPlay = true;
+
+    // ----- Playback modes (shuffle / repeat) -----
+    private bool _shuffle;
+    private int _repeatMode; // 0 = Off, 1 = Repeat All, 2 = Repeat One
+    private const int RepeatOff = 0, RepeatAll = 1, RepeatOne = 2;
+    private readonly Random _rng = new();
+    private Brush? _shuffleIdleBackground;
+
+    // ----- Windows media controls (Action Center / flyout / lock screen) -----
+    private readonly SmtcService _smtc = new();
+    private DateTime _lastSmtcTimeline = DateTime.MinValue;
     private static readonly string[] AudioExtensions =
         { ".mp3", ".wav", ".m4a", ".aac", ".wma", ".aiff", ".aif", ".flac" };
 
-    // 31 gains each, band order = GraphicEqualizer.CenterFrequencies (20 Hz … 20 kHz).
+    // Preset gains are stored 31-band; resampled for 15-band blocks.
     private static readonly Dictionary<string, float[]> EqPresets = new()
     {
         ["Flat"] = new float[31],
@@ -66,6 +80,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         _reverseIdleBackground = ReverseButton.Background;
+        _shuffleIdleBackground = ShuffleButton.Background;
 
         // Mica backdrop: visible in the transparent title-bar strip (content keeps
         // its dark background below). Falls back to a solid color off Windows 11.
@@ -77,12 +92,15 @@ public sealed partial class MainWindow : Window
         StyleCaptionButtons();
 
         // WinUI windows have no XAML Width/Height — size the AppWindow instead.
-        TrySizeWindow(980, 860);
+        TrySizeWindow(1120, 950);
         TrySetIcon();
 
         ApplyStartupState();
         FileListView.ItemsSource = _tracks;
-        BuildEqUi();        ApplyRememberedEq();
+        RestoreEffects();
+        RebuildEffectsPanel();
+        _navIdleBackground = NavPlayerButton.Background;
+        ShowView("player");
         ApplyAccent();
         _uiSettings.ColorValuesChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
@@ -99,27 +117,35 @@ public sealed partial class MainWindow : Window
                 if (_engine.IsLoaded)
                     _engine.Progress = SeekSlider.Value / 1000.0;
                 RefreshPosition();
+                RefreshSmtcTimeline(force: true);
             }), true);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _timer.Tick += (_, _) => RefreshPosition();
         _timer.Start();
 
-        _engine.PlaybackEnded += (_, _) => DispatcherQueue.TryEnqueue(() =>
+        _shuffle = _settings.ShuffleEnabled;
+        _repeatMode = Math.Clamp(_settings.RepeatMode, RepeatOff, RepeatOne);
+
+        _engine.PlaybackEnded += (_, _) => DispatcherQueue.TryEnqueue(async () =>
         {
-            _engine.Stop();
-            PlayButton.Content = "▶ Play";
-            RefreshPosition();
+            await OnTrackEndedAsync();
         });
 
         Closed += (_, _) =>
         {
             CaptureEffectState();
             CapturePlaylistState();
+            _settings.ShuffleEnabled = _shuffle;
+            _settings.RepeatMode = _repeatMode;
             _settings.Save();
+            _smtc.Dispose();
             _engine.Dispose();
         };
         UpdateTransportState();
+        UpdateShuffleRepeatUi();
+        UpdateNextUp();
+        InitSmtc();
 
         if (_settings.AutoCheckUpdates)
             CheckForUpdatesOnStartupAsync();
@@ -189,21 +215,46 @@ public sealed partial class MainWindow : Window
         TempoCard.Visibility = _settings.ShowTempoPanel ? Visibility.Visible : Visibility.Collapsed;
         PitchCard.Visibility = _settings.ShowPitchPanel ? Visibility.Visible : Visibility.Collapsed;
         LoopCard.Visibility = _settings.ShowLoopPanel ? Visibility.Visible : Visibility.Collapsed;
-        EqCard.Visibility = _settings.ShowEqPanel ? Visibility.Visible : Visibility.Collapsed;
+        if (NavEqButton != null)
+            NavEqButton.Visibility = _settings.ShowEqPanel ? Visibility.Visible : Visibility.Collapsed;
         Waveform.IsSeekEnabled = _settings.ClickToSeek;
-        ToolTipService.SetToolTip(Waveform, _settings.ClickToSeek
-            ? "Click to seek"
-            : "Seeking from the waveform is off (Settings → Editor controls)");
+        ToolTipService.SetToolTip(Waveform, null);
     }
 
-    private void ApplyRememberedEq()
+    /// <summary>Restore the effects chain (or migrate pre-chain EQ settings once).</summary>
+    private void RestoreEffects()
     {
-        if (_settings.RememberEffects && _settings.LastEqGains != null)
+        if (_settings.RememberEffects && _settings.EffectChain.Count > 0)
         {
-            _engine.SetEqGains(_settings.LastEqGains);
-            ApplyEqToSliders(_settings.LastEqGains);
+            _engine.ReplaceEffects(_settings.EffectChain);
         }
-        EqEnableCheckBox.IsChecked = !_settings.RememberEffects || _settings.LastEqEnabled;
+        else if (_settings.RememberEffects && _settings.LastEqGains != null &&
+                 _settings.LastEqGains.Length == GraphicEqualizer.BandCount &&
+                 _settings.LastEqGains.Any(g => Math.Abs(g) > 0.001f))
+        {
+            _engine.ReplaceEffects(new[]
+            {
+                new EffectBlock
+                {
+                    Kind = "eq",
+                    Enabled = _settings.LastEqEnabled,
+                    Bands = GraphicEqualizer.BandCount,
+                    Gains = (float[])_settings.LastEqGains.Clone(),
+                    Preset = "",
+                }
+            });
+            _settings.LastEqGains = null;
+        }
+        else if (_engine.SnapshotEffects().Count == 0)
+        {
+            _engine.ReplaceEffects(new[] { EffectBlock.NewEq() });
+        }
+    }
+
+    private void SaveFxSettings()
+    {
+        _settings.EffectChain = _engine.SnapshotEffects();
+        _settings.Save();
     }
 
     private void CaptureEffectState()
@@ -211,8 +262,7 @@ public sealed partial class MainWindow : Window
         _settings.LastTempoPercent = TempoSlider.Value;
         _settings.LastPitchSemitones = PitchSlider.Value;
         _settings.LastVolumePercent = VolumeSlider.Value;
-        _settings.LastEqGains = _engine.GetEqGains();
-        _settings.LastEqEnabled = _engine.EqEnabled;
+        _settings.EffectChain = _engine.SnapshotEffects();
     }
 
     private void ApplyAccent()
@@ -221,8 +271,6 @@ public sealed partial class MainWindow : Window
             ? _uiSettings.GetColorValue(UIColorType.Accent)
             : ParseHex(_settings.CustomAccentHex, Windows.UI.Color.FromArgb(255, 0x2E, 0x7D, 0x32));
         var brush = new SolidColorBrush(accent);
-        PlayButton.Background = brush;
-        PlayButton.BorderBrush = brush;
         StatusLabel.Foreground = brush;
         EffectiveTimeLabel.Foreground = brush;
         Waveform.PlayedColor = accent;
@@ -265,7 +313,7 @@ public sealed partial class MainWindow : Window
         try
         {
             await Task.Delay(2500);
-            var info = await UpdateService.CheckForUpdateAsync(_settings.UpdateFeedUrl);
+            var info = await UpdateService.CheckForUpdateAsync(_settings.UpdateFeedUrl, _settings.IncludeBetaUpdates);
             if (info == null) return;
             await PromptUpdateAsync(info);
         }
@@ -274,9 +322,15 @@ public sealed partial class MainWindow : Window
 
     private async Task PromptUpdateAsync(UpdateInfo info)
     {
+        // Beta builds are Patreon-gated: supporters unlock them in Settings.
+        if (info.IsBeta && !_settings.BetaAccessUnlocked)
+        {
+            await PromptBetaGateAsync(info);
+            return;
+        }
         var dlg = new ContentDialog
         {
-            Title = $"Update available — {info.Version}",
+            Title = info.IsBeta ? $"Beta update available — {info.Version}" : $"Update available — {info.Version}",
             Content = string.IsNullOrWhiteSpace(info.Notes)
                 ? $"Version {info.Version} is ready to install."
                 : $"Version {info.Version} is ready to install.\n\n{info.Notes}",
@@ -287,6 +341,75 @@ public sealed partial class MainWindow : Window
         };
         if (await dlg.ShowAsync() == ContentDialogResult.Primary)
             await DownloadAndInstallAsync(info);
+    }
+
+    /// <summary>Verified Patreon gate for beta builds (OAuth login + active-membership check).</summary>
+    private async Task PromptBetaGateAsync(UpdateInfo info)
+    {
+        // A stored login re-verifies silently — no browser needed.
+        if (!string.IsNullOrEmpty(_settings.PatreonRefreshToken))
+        {
+            StatusLabel.Text = "Re-verifying Patreon membership…";
+            var silent = await PatreonAuthService.RefreshAndVerifyAsync(_settings.PatreonRefreshToken);
+            if (silent != null)
+            {
+                ApplyPatreonAccount(silent);
+                StatusLabel.Text = "";
+                await PromptUpdateAsync(info); // unlocked now → normal prompt
+                return;
+            }
+            ClearPatreonLink(); // token dead or membership lapsed
+            StatusLabel.Text = "";
+        }
+        var dlg = new ContentDialog
+        {
+            Title = $"Beta {info.Version} is for Patreon supporters",
+            Content = string.IsNullOrWhiteSpace(info.Notes)
+                ? "Beta builds are gated for Patreon supporters.\nLog in to verify your membership, or wait for the stable release."
+                : $"Beta {info.Version} is gated for Patreon supporters.\n\n{info.Notes}\n\nLog in to verify your membership, or wait for the stable release.",
+            PrimaryButtonText = "Login with Patreon",
+            SecondaryButtonText = "Open Patreon page",
+            CloseButtonText = "Later",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot,
+        };
+        var result = await dlg.ShowAsync();
+        if (result == ContentDialogResult.Secondary)
+        {
+            try { await Launcher.LaunchUriAsync(new Uri(UpdateService.PatreonPageUrl)); }
+            catch { /* ignore */ }
+        }
+        else if (result == ContentDialogResult.Primary)
+        {
+            var statusProgress = new Progress<string>(s => StatusLabel.Text = s);
+            var account = await PatreonAuthService.LoginAsync(statusProgress);
+            if (account == null)
+            {
+                StatusLabel.Text = "";
+                await ShowErrorAsync("Patreon login didn't complete, or no active membership was found.");
+                return;
+            }
+            ApplyPatreonAccount(account);
+            StatusLabel.Text = "";
+            await DownloadAndInstallAsync(info);
+        }
+    }
+
+    private void ApplyPatreonAccount(PatreonAccount account)
+    {
+        _settings.BetaAccessUnlocked = true;
+        _settings.IncludeBetaUpdates = true;
+        _settings.PatreonRefreshToken = account.RefreshToken;
+        _settings.PatreonFullName = account.FullName;
+        _settings.Save();
+    }
+
+    private void ClearPatreonLink()
+    {
+        _settings.BetaAccessUnlocked = false;
+        _settings.PatreonRefreshToken = null;
+        _settings.PatreonFullName = null;
+        _settings.Save();
     }
 
     private async Task DownloadAndInstallAsync(UpdateInfo info)
@@ -383,6 +506,7 @@ public sealed partial class MainWindow : Window
         if (_playlistSync) return;
         if (FileListView.SelectedItem is not TrackItem item) return;
         await LoadTrackAsync(item, _playlistAutoPlay);
+        UpdateNextUp();
     }
 
     private async Task LoadTrackAsync(TrackItem item, bool autoplay)
@@ -392,7 +516,8 @@ public sealed partial class MainWindow : Window
         if (autoplay && _engine.IsLoaded && _engine.FilePath == item.Path)
         {
             _engine.Play();
-            PlayButton.Content = "⏸ Pause";
+            SetPlayIcon(playing: true);
+            RefreshSmtcPlayback();
         }
     }
 
@@ -441,14 +566,31 @@ public sealed partial class MainWindow : Window
         catch { /* drop is best-effort */ }
     }
 
-    private async void PrevButton_Click(object sender, RoutedEventArgs e) => await MoveSelection(-1);
-    private async void NextButton_Click(object sender, RoutedEventArgs e) => await MoveSelection(1);
+    private async void PrevButton_Click(object sender, RoutedEventArgs e) =>
+        await MoveSelection(-1, wrap: _repeatMode == RepeatAll);
 
-    private async Task MoveSelection(int delta)
+    private async void NextButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_tracks.Count == 0) return;
+        int current = FileListView.SelectedIndex;
+        int next = PickNextIndex(current, wrap: _repeatMode == RepeatAll);
+        if (next < 0) return;
+        if (next == current && _tracks[next] is TrackItem same)
+            await LoadTrackAsync(same, autoplay: true);
+        else
+            FileListView.SelectedIndex = next; // SelectionChanged auto-plays
+    }
+
+    private async Task MoveSelection(int delta, bool wrap = false)
     {
         if (_tracks.Count == 0) return;
         int i = FileListView.SelectedIndex;
-        i = i < 0 ? (delta > 0 ? 0 : _tracks.Count - 1) : Math.Clamp(i + delta, 0, _tracks.Count - 1);
+        if (i < 0)
+            i = delta > 0 ? 0 : _tracks.Count - 1;
+        else if (wrap)
+            i = (i + delta + _tracks.Count) % _tracks.Count;
+        else
+            i = Math.Clamp(i + delta, 0, _tracks.Count - 1);
         if (i == FileListView.SelectedIndex && _tracks[i] is TrackItem same)
             await LoadTrackAsync(same, autoplay: true);
         else
@@ -461,6 +603,114 @@ public sealed partial class MainWindow : Window
         bool any = _tracks.Count > 0;
         PrevButton.IsEnabled = any;
         NextButton.IsEnabled = any;
+        ShuffleButton.IsEnabled = any;
+        RepeatButton.IsEnabled = true; // Repeat One works even on a single loaded file
+        _smtc.SetNextPreviousEnabled(CanGoNext(), CanGoPrevious());
+        UpdateNextUp();
+    }
+
+    // ---------- Shuffle / repeat ----------
+
+    private void ShuffleButton_Click(object sender, RoutedEventArgs e)
+    {
+        _shuffle = !_shuffle;
+        _settings.ShuffleEnabled = _shuffle;
+        _settings.Save();
+        UpdateShuffleRepeatUi();
+        UpdateNextUp();
+    }
+
+    private void RepeatButton_Click(object sender, RoutedEventArgs e)
+    {
+        _repeatMode = (_repeatMode + 1) % 3;
+        _settings.RepeatMode = _repeatMode;
+        _settings.Save();
+        UpdateShuffleRepeatUi();
+        UpdateNextUp();
+    }
+
+    private void UpdateShuffleRepeatUi()
+    {
+        if (ShuffleButton == null || RepeatButton == null) return;
+        ShuffleButton.Background = _shuffle ? _reverseActiveBackground : _shuffleIdleBackground;
+        if (RepeatIcon != null)
+        {
+            RepeatIcon.Glyph = _repeatMode == RepeatOne ? "\uE8ED" : "\uE8EE";
+            RepeatIcon.Foreground = _repeatMode != RepeatOff
+                ? new SolidColorBrush(Colors.White)
+                : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x77, 0x77, 0x8A));
+        }
+        RepeatButton.Background = _repeatMode != RepeatOff ? _reverseActiveBackground : _shuffleIdleBackground;
+        _smtc.UpdateShuffleRepeat(_shuffle, _repeatMode);
+        _smtc.SetNextPreviousEnabled(CanGoNext(), CanGoPrevious());
+    }
+
+    /// <summary>Index of the track that follows <paramref name="current"/>; -1 = stop.</summary>
+    private int PickNextIndex(int current, bool wrap)
+    {
+        if (_tracks.Count == 0) return -1;
+        if (_shuffle && _tracks.Count > 1)
+        {
+            int next;
+            do { next = _rng.Next(_tracks.Count); } while (next == current);
+            return next;
+        }
+        int sequential = current < 0 ? 0 : current + 1;
+        if (sequential < _tracks.Count) return sequential;
+        return wrap ? 0 : -1;
+    }
+
+    private async Task OnTrackEndedAsync()
+    {
+        // Repeat One: restart the same track.
+        if (_repeatMode == RepeatOne && _engine.IsLoaded)
+        {
+            _engine.Progress = 0;
+            _engine.Play();
+            SetPlayIcon(playing: true);
+            RefreshPosition();
+            RefreshSmtcPlayback();
+            return;
+        }
+        int next = PickNextIndex(FileListView.SelectedIndex, wrap: _repeatMode == RepeatAll);
+        if (next < 0)
+        {
+            _engine.Stop();
+            SetPlayIcon(playing: false);
+            RefreshPosition();
+            RefreshSmtcPlayback();
+            return;
+        }
+        if (next == FileListView.SelectedIndex && _tracks[next] is TrackItem same)
+            await LoadTrackAsync(same, autoplay: true);
+        else
+            FileListView.SelectedIndex = next; // SelectionChanged auto-plays
+    }
+
+    private void UpdateNextUp()
+    {
+        if (NextUpLabel == null) return;
+        if (_tracks.Count == 0) { NextUpLabel.Text = ""; return; }
+        int current = FileListView.SelectedIndex;
+        if (_repeatMode == RepeatOne && current >= 0 && current < _tracks.Count)
+        {
+            NextUpLabel.Text = $"🔂 Repeating: {_tracks[current].Name}";
+            return;
+        }
+        if (_shuffle)
+        {
+            NextUpLabel.Text = _tracks.Count > 1
+                ? "🔀 Shuffle on — random up next"
+                : "🔀 Shuffle on";
+            return;
+        }
+        int next = current + 1;
+        if (next < _tracks.Count)
+            NextUpLabel.Text = $"Playing Next: {_tracks[next].Name}";
+        else if (_repeatMode == RepeatAll)
+            NextUpLabel.Text = $"Playing Next: {_tracks[0].Name} (repeat all)";
+        else
+            NextUpLabel.Text = current >= 0 ? "End of queue" : "";
     }
 
     private void CapturePlaylistState()
@@ -552,6 +802,7 @@ public sealed partial class MainWindow : Window
             RefreshPosition();
             UpdateEffectiveLabel();
             UpdateReverseUi();
+            await RefreshSmtcForTrackAsync();
 
             // Build waveform in background
             string copy = path;
@@ -575,20 +826,29 @@ public sealed partial class MainWindow : Window
         if (_engine.IsPlaying)
         {
             _engine.Pause();
-            PlayButton.Content = "▶ Play";
+            SetPlayIcon(playing: false);
         }
         else
         {
             _engine.Play();
-            PlayButton.Content = "⏸ Pause";
+            SetPlayIcon(playing: true);
         }
+        RefreshSmtcPlayback();
     }
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
         _engine.Stop();
-        PlayButton.Content = "▶ Play";
+        SetPlayIcon(playing: false);
         RefreshPosition();
+        RefreshSmtcPlayback();
+    }
+
+    /// <summary>Swap the play/pause Media Player glyph.</summary>
+    private void SetPlayIcon(bool playing)
+    {
+        if (PlayIcon != null)
+            PlayIcon.Glyph = playing ? "\uE769" : "\uE768";
     }
 
     private async void ReverseButton_Click(object sender, RoutedEventArgs e)
@@ -618,8 +878,10 @@ public sealed partial class MainWindow : Window
     private void UpdateReverseUi()
     {
         bool on = _engine.IsLoaded && _engine.Reverse;
-        ReverseButton.Content = on ? "➡ Forward" : "⏪ Reverse";
+        ReverseButton.Content = on ? "Forward" : "Reverse";
         ReverseButton.Background = on ? _reverseActiveBackground : _reverseIdleBackground;
+        if (ReverseStateLabel != null)
+            ReverseStateLabel.Text = on ? "On" : "Off";
     }
 
     private void VolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) =>
@@ -644,6 +906,7 @@ public sealed partial class MainWindow : Window
         if (!_engine.IsLoaded) return;
         _engine.Progress = progress;
         RefreshPosition();
+        RefreshSmtcTimeline(force: true);
     }
 
     private void RefreshPosition()
@@ -665,6 +928,7 @@ public sealed partial class MainWindow : Window
             Waveform.Progress = Math.Clamp(progress, 0, 1);
         }
         finally { _updatingSeek = false; }
+        RefreshSmtcTimeline();
     }
 
     // ---------- Tempo / pitch ----------
@@ -675,6 +939,7 @@ public sealed partial class MainWindow : Window
         TempoLabel.Text = $"{e.NewValue:0}%";
         _engine.Tempo = e.NewValue / 100.0;
         UpdateEffectiveLabel();
+        RefreshSmtcTimeline(force: true);
     }
 
     private void TempoPreset_Click(object sender, RoutedEventArgs e)
@@ -769,111 +1034,394 @@ public sealed partial class MainWindow : Window
         LoopLabel.Text = "No loop set";
     }
 
-    // ---------- 31-band equalizer ----------
+    // ---------- Navigation (Media Player style rail) ----------
 
-    private void BuildEqUi()
+    private void NavPlayerButton_Click(object sender, RoutedEventArgs e) => ShowView("player");
+    private void NavEqButton_Click(object sender, RoutedEventArgs e) => ShowView("eq");
+    private void NavSettingsButton_Click(object sender, RoutedEventArgs e) =>
+        SettingsButton_Click(sender, e);
+
+    private void ShowView(string view)
     {
-        foreach (var name in EqPresets.Keys)
-            EqPresetBox.Items.Add(name);
+        bool eq = view == "eq";
+        if (EqView == null || PlayerView == null) return;
+        EqView.Visibility = eq ? Visibility.Visible : Visibility.Collapsed;
+        PlayerView.Visibility = eq ? Visibility.Collapsed : Visibility.Visible;
+        if (NavPlayerButton != null)
+            NavPlayerButton.Background = !eq ? _reverseActiveBackground : _navIdleBackground;
+        if (NavEqButton != null)
+            NavEqButton.Background = eq ? _reverseActiveBackground : _navIdleBackground;
+    }
 
-        for (int band = 0; band < GraphicEqualizer.BandCount; band++)
+    // ---------- Effects chain (Equalizer APO style) ----------
+
+    private void AddEqButton_Click(object sender, RoutedEventArgs e)
+    {
+        _engine.AddEffect(EffectBlock.NewEq());
+        SaveFxSettings();
+        RebuildEffectsPanel();
+    }
+
+    private void AddPreampButton_Click(object sender, RoutedEventArgs e)
+    {
+        _engine.AddEffect(EffectBlock.NewPreamp());
+        SaveFxSettings();
+        RebuildEffectsPanel();
+    }
+
+    private void RebuildEffectsPanel()
+    {
+        if (EffectsPanel == null || EffectsEmptyLabel == null) return;
+        _rebuildingFx = true;
+        try
         {
-            float freq = GraphicEqualizer.CenterFrequencies[band];
+            EffectsPanel.Children.Clear();
+            var blocks = _engine.SnapshotEffects();
+            EffectsEmptyLabel.Visibility = blocks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            for (int i = 0; i < blocks.Count; i++)
+                EffectsPanel.Children.Add(BuildEffectCard(blocks[i], i, blocks.Count));
+        }
+        finally { _rebuildingFx = false; }
+        UpdateCurve();
+    }
+
+    /// <summary>Refresh the combined response graph from the live chain.</summary>
+    private void UpdateCurve()
+    {
+        if (FxCurve == null) return;
+        var blocks = _engine.SnapshotEffects();
+        var curve = new List<EqCurveControl.CurveBlock>(blocks.Count);
+        foreach (var b in blocks)
+        {
+            if (b.IsPreamp)
+            {
+                curve.Add(new EqCurveControl.CurveBlock
+                {
+                    IsPreamp = true, Enabled = b.Enabled, PreampDb = b.PreampDb,
+                });
+            }
+            else
+            {
+                curve.Add(new EqCurveControl.CurveBlock
+                {
+                    Freqs = GraphicEqualizer.CentersForBands(b.Bands),
+                    Gains = b.Gains ?? Array.Empty<float>(),
+                    Q = GraphicEqualizer.QForBands(b.Bands),
+                    Enabled = b.Enabled,
+                });
+            }
+        }
+        FxCurve.Update(curve, _engine.SourceSampleRate);
+    }
+
+    private Border BuildEffectCard(EffectBlock block, int index, int count)
+    {
+        var secondary = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x77, 0x77, 0x8A));
+        var card = new Border
+        {
+            Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10),
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        var root = new StackPanel { Spacing = 6 };
+        card.Child = root;
+
+        // Header: #N, type, band radios / spacer, power, up, down, delete.
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 2) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var num = new TextBlock
+        {
+            Text = $"#{index + 1}",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = secondary,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        header.Children.Add(num);
+
+        var title = new TextBlock
+        {
+            Text = block.IsPreamp ? "Preamp" : $"Graphic EQ • {block.Bands}-band",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(title, 1);
+        header.Children.Add(title);
+
+        int col = 2;
+        if (!block.IsPreamp)
+        {
+            var bandsPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
+            var r15 = new RadioButton { Content = "15-band", Tag = (index, GraphicEqualizer.BandCount15), IsChecked = block.Bands == GraphicEqualizer.BandCount15, VerticalAlignment = VerticalAlignment.Center };
+            var r31 = new RadioButton { Content = "31-band", Tag = (index, GraphicEqualizer.BandCount), IsChecked = block.Bands != GraphicEqualizer.BandCount15, VerticalAlignment = VerticalAlignment.Center };
+            r15.Checked += FxBands_Checked;
+            r31.Checked += FxBands_Checked;
+            bandsPanel.Children.Add(r15);
+            bandsPanel.Children.Add(r31);
+            Grid.SetColumn(bandsPanel, col++);
+            header.Children.Add(bandsPanel);
+        }
+
+        var power = new ToggleSwitch
+        {
+            IsOn = block.Enabled,
+            Tag = (index, (StackPanel?)null), // body filled in below
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 0,
+        };
+        ToolTipService.SetToolTip(power, block.Enabled ? "Bypass this effect" : "Enable this effect");
+        power.Toggled += FxPower_Toggled;
+        Grid.SetColumn(power, col++);
+        header.Children.Add(power);
+
+        header.Children.Add(IconButton("\uE70E", "Move up", FxMove_Click, (index, -1), enabled: index > 0, col: col++));
+        header.Children.Add(IconButton("\uE70D", "Move down", FxMove_Click, (index, +1), enabled: index < count - 1, col: col++));
+        header.Children.Add(IconButton("\uE74D", "Remove effect", FxDelete_Click, index, col: col++));
+        root.Children.Add(header);
+
+        // Body (dimmed when bypassed).
+        var body = new StackPanel { Spacing = 6, Opacity = block.Enabled ? 1.0 : 0.45 };
+        power.Tag = (index, body);
+        if (block.IsPreamp)
+            BuildPreampBody(body, block, index);
+        else
+            BuildEqBody(body, block, index);
+        root.Children.Add(body);
+
+        return card;
+    }
+
+    private static Button IconButton(string glyph, string tip, RoutedEventHandler click, object tag, bool enabled = true, int col = 0)
+    {
+        var b = new Button { Padding = new Thickness(8, 2, 8, 2), Tag = tag, IsEnabled = enabled };
+        ToolTipService.SetToolTip(b, tip);
+        b.Content = new FontIcon { Glyph = glyph, FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 14 };
+        Grid.SetColumn(b, col);
+        b.Click += click;
+        return b;
+    }
+
+    private void BuildEqBody(StackPanel body, EffectBlock block, int index)
+    {
+        // Preset row.
+        var presetRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var presetBox = new ComboBox { Width = 150, Tag = index };
+        foreach (var name in EqPresets.Keys)
+            presetBox.Items.Add(name);
+        presetBox.SelectedItem = EqPresets.ContainsKey(block.Preset ?? "") ? block.Preset : null;
+        presetBox.SelectionChanged += FxPresetBox_SelectionChanged;
+        presetRow.Children.Add(presetBox);
+        var flatBtn = IconButton("\uE7A7", "Reset bands to flat", FxResetButton_Click, index);
+        Grid.SetColumn(flatBtn, 0);
+        presetRow.Children.Add(flatBtn);
+        var hint = new TextBlock
+        {
+            Text = "+/-15 dB per band, 1 dB steps",
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x77, 0x77, 0x8A)),
+        };
+        presetRow.Children.Add(hint);
+        body.Children.Add(presetRow);
+
+        // Bands.
+        var freqs = GraphicEqualizer.CentersForBands(block.Bands);
+        var labels = GraphicEqualizer.LabelsForBands(block.Bands);
+        var scroll = new ScrollViewer
+        {
+            HorizontalScrollMode = ScrollMode.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollMode = ScrollMode.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+        };
+        var bandsPanel = new StackPanel { Orientation = Orientation.Horizontal };
+        scroll.Content = bandsPanel;
+        for (int band = 0; band < block.Bands; band++)
+        {
+            float gain = block.Gains != null && band < block.Gains.Length ? block.Gains[band] : 0;
+            var value = new TextBlock
+            {
+                Text = FmtDb(gain),
+                FontSize = 10,
+                TextAlignment = TextAlignment.Center,
+                Width = 40,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x7C, 0x9E, 0xFF)),
+            };
             var slider = new Slider
             {
                 Orientation = Orientation.Vertical,
                 Minimum = GraphicEqualizer.MinGainDb,
                 Maximum = GraphicEqualizer.MaxGainDb,
-                Value = 0,
-                Height = 95,
-                Width = 22,
+                Value = gain,
+                Height = 100,
+                Width = 30,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 TickFrequency = 1,
                 StepFrequency = 1,
-                Tag = band,
+                Tag = (index, band, presetBox),
             };
-            ToolTipService.SetToolTip(slider, EqTip(freq, 0));
-            slider.ValueChanged += EqBandSlider_ValueChanged;
-            _eqSliders[band] = slider;
-
-            var label = new TextBlock
+            ToolTipService.SetToolTip(slider, EqTip(freqs[band], gain));
+            slider.ValueChanged += FxBandSlider_ValueChanged;
+            var freq = new TextBlock
             {
-                Text = GraphicEqualizer.ShortLabels[band],
+                Text = labels[band],
                 FontSize = 9,
                 Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x77, 0x77, 0x8A)),
                 TextAlignment = TextAlignment.Center,
-                Width = 34,
+                Width = 40,
             };
-
-            var col = new StackPanel { Width = 34, Margin = new Thickness(1, 0, 1, 0) };
-            col.Children.Add(slider);
-            col.Children.Add(label);
-            EqBandsPanel.Children.Add(col);
+            var c = new StackPanel { Width = 40, Margin = new Thickness(1, 0, 1, 0) };
+            c.Children.Add(value);
+            c.Children.Add(slider);
+            c.Children.Add(freq);
+            bandsPanel.Children.Add(c);
         }
-
-        // Select Flat preset last: SelectionChanged applies gains to the sliders,
-        // which must exist first.
-        EqPresetBox.SelectedIndex = 0; // Flat
+        body.Children.Add(scroll);
     }
+
+    private void BuildPreampBody(StackPanel body, EffectBlock block, int index)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
+        var number = new NumberBox
+        {
+            Header = "Gain (dB)",
+            Minimum = -20,
+            Maximum = 20,
+            Value = block.PreampDb,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+            SmallChange = 0.5,
+            LargeChange = 1,
+            Width = 160,
+            Tag = (index, (Slider?)null),
+        };
+        var slider = new Slider
+        {
+            Minimum = -20,
+            Maximum = 20,
+            StepFrequency = 0.5,
+            Value = block.PreampDb,
+            Width = 220,
+            VerticalAlignment = VerticalAlignment.Center,
+            Tag = (index, (NumberBox?)null),
+        };
+        number.Tag = (index, slider);
+        slider.Tag = (index, number);
+        number.ValueChanged += FxPreampBox_ValueChanged;
+        slider.ValueChanged += FxPreampSlider_ValueChanged;
+        row.Children.Add(number);
+        row.Children.Add(slider);
+        body.Children.Add(row);
+    }
+
+    private void FxBandSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_rebuildingFx || sender is not Slider s || s.Tag is not (int bi, int band, ComboBox preset)) return;
+        var blocks = _engine.SnapshotEffects();
+        if (bi < 0 || bi >= blocks.Count) return;
+        var blk = blocks[bi];
+        if (blk.IsPreamp || band < 0 || band >= blk.Bands) return;
+        _engine.SetEffectGain(bi, band, (float)e.NewValue);
+        if (s.Parent is StackPanel c && c.Children.Count > 0 && c.Children[0] is TextBlock v)
+            v.Text = FmtDb(e.NewValue);
+        ToolTipService.SetToolTip(s, EqTip(GraphicEqualizer.CentersForBands(blk.Bands)[band], e.NewValue));
+        // Manual tweak → no longer exactly a preset (null = early return in handler).
+        preset.SelectedIndex = -1;
+        UpdateCurve();
+    }
+
+    private void FxPresetBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_rebuildingFx || sender is not ComboBox box || box.Tag is not int index) return;
+        if (box.SelectedItem is not string name) return;
+        if (!EqPresets.TryGetValue(name, out var gains)) return;
+        var blocks = _engine.SnapshotEffects();
+        if (index < 0 || index >= blocks.Count) return;
+        var b = blocks[index];
+        float[] dst = gains.Length == b.Bands
+            ? gains
+            : GraphicEqualizer.ResampleGains(GraphicEqualizer.CentersForBands(gains.Length),
+                gains, GraphicEqualizer.CentersForBands(b.Bands));
+        _engine.SetEffectGains(index, dst, name);
+        SaveFxSettings();
+        RebuildEffectsPanel();
+    }
+
+    private void FxResetButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button b || b.Tag is not int index) return;
+        _engine.ResetEffect(index);
+        SaveFxSettings();
+        RebuildEffectsPanel();
+    }
+
+    private void FxPower_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleSwitch t || t.Tag is not (int index, StackPanel body)) return;
+        _engine.SetEffectEnabled(index, t.IsOn);
+        body.Opacity = t.IsOn ? 1.0 : 0.45;
+        ToolTipService.SetToolTip(t, t.IsOn ? "Bypass this effect" : "Enable this effect");
+        SaveFxSettings();
+        UpdateCurve();
+    }
+
+    private void FxBands_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_rebuildingFx || sender is not RadioButton r || r.Tag is not (int index, int bands)) return;
+        if (r.IsChecked != true) return;
+        _engine.SetEffectBands(index, bands);
+        SaveFxSettings();
+        RebuildEffectsPanel();
+    }
+
+    private void FxMove_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button b || b.Tag is not (int from, int delta)) return;
+        _engine.MoveEffect(from, from + delta);
+        SaveFxSettings();
+        RebuildEffectsPanel();
+    }
+
+    private void FxDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button b || b.Tag is not int index) return;
+        _engine.RemoveEffectAt(index);
+        SaveFxSettings();
+        RebuildEffectsPanel();
+    }
+
+    private void FxPreampBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_rebuildingFx || sender.Tag is not (int index, Slider slider)) return;
+        _engine.SetPreampDb(index, (float)sender.Value);
+        if (Math.Abs(slider.Value - sender.Value) > 0.001)
+            slider.Value = sender.Value;
+        SaveFxSettings();
+        UpdateCurve();
+    }
+
+    private void FxPreampSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_rebuildingFx || sender is not Slider s || s.Tag is not (int index, NumberBox number)) return;
+        _engine.SetPreampDb(index, (float)e.NewValue);
+        if (Math.Abs(number.Value - e.NewValue) > 0.001)
+            number.Value = e.NewValue;
+        SaveFxSettings();
+        UpdateCurve();
+    }
+
+    private static string FmtDb(double gain) => $"{(gain >= 0 ? "+" : "")}{gain:0.0}";
 
     private static string EqTip(float freq, double gain) =>
         $"{(freq >= 1000 ? $"{freq / 1000:0.##} kHz" : $"{freq:0.#} Hz")}: {(gain >= 0 ? "+" : "")}{gain:0} dB";
-
-    private void EqBandSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_updatingEq || sender is not Slider s || s.Tag is not int band) return;
-        _engine.SetEqGain(band, (float)e.NewValue);
-        ToolTipService.SetToolTip(s, EqTip(GraphicEqualizer.CenterFrequencies[band], e.NewValue));
-        // Manual tweak → no longer exactly a preset.
-        _updatingEq = true;
-        try { EqPresetBox.SelectedIndex = -1; }
-        finally { _updatingEq = false; }
-    }
-
-    private void EqPresetBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_updatingEq || EqPresetBox.SelectedItem is not string name) return;
-        if (!EqPresets.TryGetValue(name, out var gains)) return;
-        _engine.SetEqGains(gains);
-        ApplyEqToSliders(gains);
-    }
-
-    private void EqFlatButton_Click(object sender, RoutedEventArgs e)
-    {
-        _engine.ResetEq();
-        ApplyEqToSliders(new float[GraphicEqualizer.BandCount]);
-        _updatingEq = true;
-        try { EqPresetBox.SelectedIndex = EqPresetBox.Items.IndexOf("Flat"); }
-        finally { _updatingEq = false; }
-    }
-
-    private void EqEnableCheckBox_Changed(object sender, RoutedEventArgs e)
-    {
-        bool on = EqEnableCheckBox.IsChecked == true;
-        _engine.EqEnabled = on;
-        // StackPanel (Panel) has no IsEnabled in WinUI — disable each band slider.
-        foreach (var s in _eqSliders)
-        {
-            if (s != null) s.IsEnabled = on;
-        }
-        if (EqBandsPanel != null)
-            EqBandsPanel.Opacity = on ? 1.0 : 0.45;
-    }
-
-    private void ApplyEqToSliders(float[] gains)
-    {
-        _updatingEq = true;
-        try
-        {
-            for (int i = 0; i < _eqSliders.Length; i++)
-            {
-                if (_eqSliders[i] == null) continue;
-                _eqSliders[i].Value = gains[i];
-                ToolTipService.SetToolTip(_eqSliders[i], EqTip(GraphicEqualizer.CenterFrequencies[i], gains[i]));
-            }
-        }
-        finally { _updatingEq = false; }
-    }
 
     // ---------- Export ----------
 
@@ -884,7 +1432,7 @@ public sealed partial class MainWindow : Window
         bool hasLoop = _engine.LoopA.HasValue && _engine.LoopB.HasValue && _engine.LoopB > _engine.LoopA;
         string suggested = Path.GetFileNameWithoutExtension(_engine.FileName ?? "track")
                     + $"_{TempoSlider.Value:0}pct_{(PitchSlider.Value >= 0 ? "+" : "")}{PitchSlider.Value:0.0}st"
-                    + (_engine.EqEnabled && !_engine.EqIsFlat ? "_eq" : "");
+                    + (_engine.EffectsActive ? "_eq" : "");
 
         var saveDialog = new SaveDialog(SaveDialog.SanitizeFileName(suggested), hasLoop)
         {
@@ -980,4 +1528,135 @@ public sealed partial class MainWindow : Window
         if (t.TotalHours >= 1) return $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}";
         return $"{(int)t.TotalMinutes}:{t.Seconds:00}.{t.Milliseconds / 100}";
     }
+
+    // ---------- Windows media controls (SMTC / Action Center) ----------
+
+    private void InitSmtc()
+    {
+        try
+        {
+            _smtc.Initialize(WindowHandle);
+            _smtc.PlayPressed += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_engine.IsLoaded && !_engine.IsPlaying)
+                {
+                    _engine.Play();
+                    SetPlayIcon(playing: true);
+                    RefreshSmtcPlayback();
+                }
+            });
+            _smtc.PausePressed += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_engine.IsPlaying)
+                {
+                    _engine.Pause();
+                    SetPlayIcon(playing: false);
+                    RefreshSmtcPlayback();
+                }
+            });
+            _smtc.StopPressed += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                _engine.Stop();
+                SetPlayIcon(playing: false);
+                RefreshPosition();
+                RefreshSmtcPlayback();
+            });
+            _smtc.NextPressed += (_, _) => DispatcherQueue.TryEnqueue(async () => await SmtcNextAsync());
+            _smtc.PreviousPressed += (_, _) => DispatcherQueue.TryEnqueue(async () => await MoveSelection(-1, wrap: _repeatMode == RepeatAll));
+            _smtc.SeekRequested += (_, pos) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_engine.IsLoaded) return;
+                _engine.SourcePosition = pos;
+                RefreshPosition();
+                RefreshSmtcTimeline(force: true);
+            });
+            _smtc.RateRequested += (_, rate) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (rate >= 0.25 && rate <= 2.0)
+                    TempoSlider.Value = rate * 100.0;
+            });
+            _smtc.ShuffleRequested += (_, on) => DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_shuffle == on) return;
+                _shuffle = on;
+                _settings.ShuffleEnabled = on;
+                _settings.Save();
+                UpdateShuffleRepeatUi();
+                UpdateNextUp();
+            });
+            _smtc.RepeatRequested += (_, mode) => DispatcherQueue.TryEnqueue(() =>
+            {
+                mode = Math.Clamp(mode, RepeatOff, RepeatOne);
+                if (_repeatMode == mode) return;
+                _repeatMode = mode;
+                _settings.RepeatMode = mode;
+                _settings.Save();
+                UpdateShuffleRepeatUi();
+                UpdateNextUp();
+            });
+            _smtc.UpdateShuffleRepeat(_shuffle, _repeatMode);
+            RefreshSmtcPlayback();
+        }
+        catch { /* media keys are best-effort */ }
+    }
+
+    private async Task SmtcNextAsync()
+    {
+        if (_tracks.Count == 0) return;
+        int current = FileListView.SelectedIndex;
+        int next = PickNextIndex(current, wrap: _repeatMode == RepeatAll);
+        if (next < 0) return;
+        if (next == current && _tracks[next] is TrackItem same)
+            await LoadTrackAsync(same, autoplay: true);
+        else
+            FileListView.SelectedIndex = next; // SelectionChanged auto-plays
+    }
+
+    private async Task RefreshSmtcForTrackAsync()
+    {
+        try
+        {
+            if (!_engine.IsLoaded || _engine.FilePath == null)
+            {
+                _smtc.ClearTrack();
+                return;
+            }
+            await _smtc.UpdateTrackAsync(_engine.FilePath);
+            _smtc.UpdateShuffleRepeat(_shuffle, _repeatMode);
+            RefreshSmtcPlayback();
+        }
+        catch { /* ignore */ }
+    }
+
+    private void RefreshSmtcPlayback()
+    {
+        try
+        {
+            _smtc.UpdatePlaybackStatus(_engine.IsLoaded, _engine.IsPlaying);
+            _smtc.SetNextPreviousEnabled(CanGoNext(), CanGoPrevious());
+            RefreshSmtcTimeline(force: true);
+        }
+        catch { /* ignore */ }
+    }
+
+    private void RefreshSmtcTimeline(bool force = false)
+    {
+        if (!_engine.IsLoaded) return;
+        var now = DateTime.UtcNow;
+        if (!force && (now - _lastSmtcTimeline).TotalMilliseconds < 800) return;
+        _lastSmtcTimeline = now;
+        _smtc.UpdateTimeline(_engine.SourcePosition, _engine.SourceDuration,
+            Math.Clamp(TempoSlider.Value / 100.0, 0.25, 3.0));
+    }
+
+    private bool CanGoNext()
+    {
+        if (_tracks.Count == 0) return false;
+        if (_shuffle && _tracks.Count > 1) return true;
+        int current = -1;
+        try { current = FileListView.SelectedIndex; } catch { /* ignore */ }
+        return current + 1 < _tracks.Count || _repeatMode == RepeatAll;
+    }
+
+    private bool CanGoPrevious() => _tracks.Count > 0;
 }

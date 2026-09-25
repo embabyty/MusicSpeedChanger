@@ -24,10 +24,13 @@ public sealed partial class SettingsDialog : ContentDialog
         InitializeComponent();
         Draft = (settings ?? throw new ArgumentNullException(nameof(settings))).Clone();
 
-        VersionLabel.Text = $"Music Speed Changer {UpdateService.CurrentVersion}";
+        VersionLabel.Text = $"Music Speed Changer {UpdateService.DisplayVersion}";
+        OwnerEmailLabel.Text = $"{UpdateService.OwnerName} — {UpdateService.OwnerEmail}";
 
         AutoCheckSwitch.IsOn = Draft.AutoCheckUpdates;
         FeedUrlBox.Text = Draft.UpdateFeedUrl;
+        BetaUpdatesBox.IsChecked = Draft.IncludeBetaUpdates;
+        UpdatePatreonUi();
 
         DefaultTempoBox.Value = Draft.DefaultTempoPercent;
         DefaultPitchBox.Value = Draft.DefaultPitchSemitones;
@@ -56,6 +59,8 @@ public sealed partial class SettingsDialog : ContentDialog
     {
         Draft.AutoCheckUpdates = AutoCheckSwitch.IsOn;
         Draft.UpdateFeedUrl = FeedUrlBox.Text?.Trim() ?? "";
+        Draft.IncludeBetaUpdates = BetaUpdatesBox.IsChecked == true;
+        // Draft.BetaAccessUnlocked + Patreon tokens are mutated by login/unlink, not a checkbox.
 
         Draft.DefaultTempoPercent = DefaultTempoBox.Value;
         Draft.DefaultPitchSemitones = DefaultPitchBox.Value;
@@ -81,6 +86,73 @@ public sealed partial class SettingsDialog : ContentDialog
     private void UseAccentSwitch_Toggled(object sender, RoutedEventArgs e) =>
         CustomAccentPicker.IsEnabled = !UseAccentSwitch.IsOn;
 
+    private async void PatreonButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(new Uri(UpdateService.PatreonPageUrl));
+        }
+        catch { /* launching the browser is best-effort */ }
+    }
+
+    private async void EmailOwnerButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(new Uri($"mailto:{UpdateService.OwnerEmail}"));
+        }
+        catch { /* launching the mail client is best-effort */ }
+    }
+
+    private void UpdatePatreonUi()
+    {
+        bool linked = Draft.BetaAccessUnlocked && !string.IsNullOrEmpty(Draft.PatreonRefreshToken);
+        PatreonLoginButton.Visibility = linked ? Visibility.Collapsed : Visibility.Visible;
+        PatreonUnlinkButton.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
+        if (PatreonStatusLabel == null) return;
+        if (linked)
+        {
+            string who = string.IsNullOrWhiteSpace(Draft.PatreonFullName) ? "" : $" as {Draft.PatreonFullName}";
+            PatreonStatusLabel.Text = $"Linked{who} ✓ — beta downloads unlocked.";
+        }
+        else if (string.IsNullOrWhiteSpace(PatreonStatusLabel.Text) ||
+                 PatreonStatusLabel.Text.StartsWith("Linked", StringComparison.Ordinal))
+        {
+            PatreonStatusLabel.Text = "Not linked — log in with Patreon to unlock betas.";
+        }
+    }
+
+    private async void PatreonLoginButton_Click(object sender, RoutedEventArgs e)
+    {
+        PatreonLoginButton.IsEnabled = false;
+        try
+        {
+            var progress = new Progress<string>(s => PatreonStatusLabel.Text = s);
+            var account = await PatreonAuthService.LoginAsync(progress);
+            if (account == null)
+            {
+                PatreonStatusLabel.Text = "Login didn't complete, or no active membership was found.";
+                return;
+            }
+            Draft.BetaAccessUnlocked = true;
+            Draft.PatreonRefreshToken = account.RefreshToken;
+            Draft.PatreonFullName = account.FullName;
+            Draft.IncludeBetaUpdates = true;
+            BetaUpdatesBox.IsChecked = true;
+            UpdatePatreonUi();
+        }
+        finally { PatreonLoginButton.IsEnabled = true; }
+    }
+
+    private void PatreonUnlinkButton_Click(object sender, RoutedEventArgs e)
+    {
+        Draft.BetaAccessUnlocked = false;
+        Draft.PatreonRefreshToken = null;
+        Draft.PatreonFullName = null;
+        PatreonStatusLabel.Text = "Not linked — log in with Patreon to unlock betas.";
+        UpdatePatreonUi();
+    }
+
     private async void CheckNowButton_Click(object sender, RoutedEventArgs e)
     {
         if (_checking) return;
@@ -90,15 +162,41 @@ public sealed partial class SettingsDialog : ContentDialog
         UpdateStatusLabel.Text = "Checking…";
         try
         {
-            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "");
+            bool wantBeta = BetaUpdatesBox.IsChecked == true;
+            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "", wantBeta);
             if (info == null)
             {
-                UpdateStatusLabel.Text = $"You're up to date ({UpdateService.CurrentVersion}).";
+                UpdateStatusLabel.Text = wantBeta
+                    ? $"You're up to date ({UpdateService.DisplayVersion})."
+                    : $"You're up to date ({UpdateService.DisplayVersion}).\nBeta builds are gated for Patreon supporters — tick “Include beta updates” to look for them.";
             }
-            else
+            else if (info.IsBeta && !Draft.BetaAccessUnlocked)
+            {
+                // Honor a stored login silently before asking the user to log in.
+                if (!string.IsNullOrEmpty(Draft.PatreonRefreshToken))
+                {
+                    UpdateStatusLabel.Text = "Re-verifying Patreon membership…";
+                    var account = await PatreonAuthService.RefreshAndVerifyAsync(Draft.PatreonRefreshToken);
+                    if (account != null)
+                    {
+                        Draft.BetaAccessUnlocked = true;
+                        Draft.PatreonRefreshToken = account.RefreshToken;
+                        Draft.PatreonFullName = account.FullName;
+                        UpdatePatreonUi();
+                    }
+                }
+            }
+            if (info != null && info.IsBeta && !Draft.BetaAccessUnlocked)
+            {
+                UpdateStatusLabel.Text = $"Version {info.Version} is a beta for Patreon supporters.\n" +
+                    "Use “Login with Patreon” above, then check again to install it.";
+            }
+            else if (info != null)
             {
                 _pendingUpdate = info;
-                UpdateStatusLabel.Text = $"Version {info.Version} is available.\n{info.Notes}";
+                UpdateStatusLabel.Text = info.IsBeta
+                    ? $"Beta {info.Version} is available.\n{info.Notes}"
+                    : $"Version {info.Version} is available.\n{info.Notes}";
                 InstallUpdateButton.Visibility = Visibility.Visible;
             }
         }

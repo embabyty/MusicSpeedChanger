@@ -18,9 +18,10 @@
     <Product>Music Speed Changer</Product>
     <Company>Music Speed Changer</Company>
     <Copyright>Copyright © 2026</Copyright>
-    <AssemblyVersion>2.1.1.0</AssemblyVersion>
-    <FileVersion>2.1.1.0</FileVersion>
-    <Version>2.1.1</Version>
+    <AssemblyVersion>3.0.0.0</AssemblyVersion>
+    <FileVersion>3.0.0.0</FileVersion>
+    <Version>3.0.0-beta.1</Version>
+    <InformationalVersion>3.0.0 Beta 1</InformationalVersion>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Win32Icon>Assets\AppIcon.ico</Win32Icon>
     <!-- CsWinRT needs this for trimmed/published builds -->

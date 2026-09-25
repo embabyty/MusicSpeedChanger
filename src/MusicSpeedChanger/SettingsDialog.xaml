@@ -31,6 +31,21 @@
             <TextBlock x:Name="UpdateStatusLabel" TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
+            <!-- Supporter & beta (betas are Patreon-gated) -->
+            <TextBlock Text="Supporter &amp; beta" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="Beta builds are available to Patreon supporters. Log in to verify membership and unlock them."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            <CheckBox x:Name="BetaUpdatesBox" Content="Include beta updates" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <Button x:Name="PatreonLoginButton" Content="Login with Patreon" Click="PatreonLoginButton_Click"
+                        Style="{ThemeResource AccentButtonStyle}" />
+                <Button x:Name="PatreonUnlinkButton" Content="Unlink" Click="PatreonUnlinkButton_Click"
+                        Visibility="Collapsed" />
+                <Button x:Name="PatreonButton" Content="Open Patreon page" Click="PatreonButton_Click" />
+            </StackPanel>
+            <TextBlock x:Name="PatreonStatusLabel" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
             <!-- Speed & pitch -->
             <TextBlock Text="Speed &amp; pitch" Style="{StaticResource SectionHeader}" />
             <NumberBox x:Name="DefaultTempoBox" Header="Default tempo (%)"
@@ -68,7 +83,16 @@
             <TextBlock Text="Custom accent (when above is off)"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <ColorPicker x:Name="CustomAccentPicker"
-                         IsAlphaEnabled="False" IsHexInputVisible="True" />
+                          IsAlphaEnabled="False" IsHexInputVisible="True" />
+
+            <!-- About / owner -->
+            <TextBlock Text="About" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="Music Speed Changer by EmAppleFlagship (Patreon)."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <Button x:Name="EmailOwnerButton" Content="Email the owner" Click="EmailOwnerButton_Click" />
+            </StackPanel>
+            <TextBlock x:Name="OwnerEmailLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </StackPanel>
     </ScrollViewer>
 </ContentDialog>

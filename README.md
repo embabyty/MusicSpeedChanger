@@ -11,11 +11,16 @@ musicians practicing tricky sections.
 - **Tempo control** 25%–200% (presets: 0.5x, 0.75x, 1x, 1.25x, 1.5x), pitch preserved
 - **Pitch shift** −12…+12 semitones (0.1-st resolution), tempo preserved
 - **AB loop** — set A / B points, loop the section while practicing
-- **31-band graphic EQ** (ISO 20 Hz–20 kHz, ±15 dB) with presets, bypass switch, applied live and in exports
+- **Effects chain** (Equalizer APO style, separate EQ view in the sidebar): add unlimited
+  Graphic EQ blocks (**15-band** or **31-band**, no variable mode) and Preamp gain blocks,
+  each with power toggle, reorder and delete — ISO bands, ±15 dB, presets per block,
+  applied live and in exports (blocks run top to bottom, then a peak limiter)
 - **Import** MP3, WAV, M4A/AAC, WMA, AIFF, FLAC (via Media Foundation / NAudio)
 - **Waveform display** with playhead, click/drag to seek, loop-region highlight
 - **Export to WAV** with current tempo + pitch + EQ (exports the AB loop if one is set, `_eq` in filename when EQ is active)
 - Volume control, effective-duration readout ("plays as 2:00 @ 150%")
+- Media Player style shell: icon nav rail (Player / Effects / Settings) with a bottom
+  mini-player bar (seek, shuffle / prev / play / next / repeat, volume, Playing Next)
 - Clean DSP chain: SoundTouch runs with the anti-alias filter (64 taps) and
   exact-seek mode, a long-window stretch profile kicks in below ~65% speed to
   avoid slow-tempo warble, and a transparent peak limiter (-0.2 dBFS) after the
@@ -27,6 +32,8 @@ musicians practicing tricky sections.
 - **Queue sidebar** — keep a list of audio files: add via picker or drag-and-drop,
   click a track to load and play it, ⏮/⏭ step through the list, per-track
   durations, Delete-key removal, list restored on startup (toggle in Settings)
+- **Shuffle & repeat** — 🔀 shuffles the queue, 🔁 cycles Off → All → One;
+  tracks auto-advance on end, with a "Playing Next" readout under the transport
 
 ## Tech
 
@@ -68,6 +75,9 @@ The in-app updater polls the GitHub Releases API
 2. Publish and rebuild the installer, then attach the resulting
    `Setup-MusicSpeedChanger-<version>.exe` to a GitHub release tagged
    `v<version>` (e.g. `v1.1.0`).
+3. For betas, compile `installer/MusicSpeedChanger.Beta.iss` instead and attach
+   `Setup-MusicSpeedChanger-Beta-<version>.exe` to a GitHub **prerelease**
+   (e.g. `v3.0.0-beta.1`) — the updater only offers it to Patreon-linked supporters.
 
 Settings live in `%LocalAppData%\MusicSpeedChanger\settings.json` and can be
 edited by hand when the app is closed; effect state (tempo/pitch/volume/EQ) is

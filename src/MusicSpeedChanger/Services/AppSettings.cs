@@ -17,6 +17,13 @@ public sealed class AppSettings
     // ----- Updates -----
     public bool AutoCheckUpdates { get; set; } = true;
     public string UpdateFeedUrl { get; set; } = DefaultFeedUrl;
+    /// <summary>When true, the updater also looks at beta/pre-release builds.</summary>
+    public bool IncludeBetaUpdates { get; set; } = false;
+    /// <summary>True after a verified Patreon login (active membership).</summary>
+    public bool BetaAccessUnlocked { get; set; } = false;
+    /// <summary>Patreon OAuth refresh token (plaintext, like a session cookie).</summary>
+    public string? PatreonRefreshToken { get; set; }
+    public string? PatreonFullName { get; set; }
 
     // ----- Speed & pitch -----
     public double DefaultTempoPercent { get; set; } = 100;
@@ -42,9 +49,17 @@ public sealed class AppSettings
     public List<string> FileListPaths { get; set; } = new();
     public string? LastFilePath { get; set; }
 
+    // ----- Playback modes -----
+    public bool ShuffleEnabled { get; set; } = false;
+    /// <summary>0 = Off, 1 = Repeat All, 2 = Repeat One.</summary>
+    public int RepeatMode { get; set; } = 0;
+
     // ----- Appearance -----
     public bool UseSystemAccent { get; set; } = true;
     public string CustomAccentHex { get; set; } = "#2E7D32";
+
+    // ----- Effects chain (Equalizer APO style; engine is source of truth) -----
+    public List<Audio.EffectBlock> EffectChain { get; set; } = new();
 
     // ----- Last effect state (written on exit, restored on startup) -----
     public double LastTempoPercent { get; set; } = 100;
@@ -102,6 +117,7 @@ public sealed class AppSettings
         {
             if (!prop.CanWrite || prop.Name == nameof(FilePath)) continue;
             if (prop.Name.StartsWith("Last", StringComparison.Ordinal)) continue; // effect state is runtime-owned
+            if (prop.Name == nameof(EffectChain)) continue; // owned by the engine, not the dialog draft
             prop.SetValue(this, prop.GetValue(copy));
         }
         Clamp();
@@ -117,8 +133,11 @@ public sealed class AppSettings
         LastTempoPercent = Math.Clamp(LastTempoPercent, 25, 300);
         LastPitchSemitones = Math.Clamp(LastPitchSemitones, -12, 12);
         LastVolumePercent = Math.Clamp(LastVolumePercent, 0, 100);
+        RepeatMode = Math.Clamp(RepeatMode, 0, 2);
         if (string.IsNullOrWhiteSpace(UpdateFeedUrl)) UpdateFeedUrl = DefaultFeedUrl;
         if (string.IsNullOrWhiteSpace(CustomAccentHex)) CustomAccentHex = "#2E7D32";
+        if (string.IsNullOrWhiteSpace(PatreonRefreshToken)) PatreonRefreshToken = null;
+        if (string.IsNullOrWhiteSpace(PatreonFullName)) PatreonFullName = null;
         if (LastEqGains != null && LastEqGains.Length != Audio.GraphicEqualizer.BandCount)
             LastEqGains = null;
     }

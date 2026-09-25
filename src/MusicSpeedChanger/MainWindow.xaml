@@ -22,7 +22,7 @@
             </StackPanel>
         </Grid>
 
-    <Border Grid.Row="1" Padding="12">
+    <Border Grid.Row="1" Padding="12,12,12,8">
     <Grid>
         <Grid.Resources>
             <Style TargetType="Button">
@@ -37,223 +37,432 @@
                 <Setter Property="Margin" Value="4" />
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
-            <Style TargetType="TextBlock" x:Key="ValueLabel">
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="Foreground" Value="#FFFFFF" />
-                <Setter Property="MinWidth" Value="90" />
-                <Setter Property="TextAlignment" Value="Right" />
-            </Style>
             <Style TargetType="TextBlock" x:Key="CardHeader">
                 <Setter Property="Foreground" Value="#B8B8D0" />
                 <Setter Property="FontWeight" Value="SemiBold" />
                 <Setter Property="Margin" Value="0,0,0,6" />
             </Style>
+            <Style TargetType="Button" x:Key="RailButton">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="#E8E8F0" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Margin" Value="0,2" />
+                <Setter Property="Width" Value="44" />
+                <Setter Property="Height" Value="44" />
+                <Setter Property="CornerRadius" Value="8" />
+            </Style>
         </Grid.Resources>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-        <!-- Header -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button x:Name="OpenButton" Content="&#x1F4C2; Open�" Click="OpenButton_Click" FontWeight="SemiBold" />
-            <Button x:Name="ExportButton" Content="&#x1F4BE; Save" Click="ExportButton_Click" IsEnabled="False" />
-            <Button x:Name="SettingsButton" Content="? Settings" Click="SettingsButton_Click" />
-            <TextBlock x:Name="FileLabel" Text="No file loaded" VerticalAlignment="Center" Margin="12,0"
-                       Foreground="#B8B8D0" TextTrimming="CharacterEllipsis" />
-            <TextBlock x:Name="StatusLabel" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
-                       Foreground="#7C9EFF" HorizontalAlignment="Right" />
-        </StackPanel>
-
-        <!-- Main content -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="230" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-
-            <!-- Queue sidebar -->
-            <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,6,6" Padding="8">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Text="Queue" Style="{StaticResource CardHeader}" />
-                    <ListView Grid.Row="1" x:Name="FileListView" SelectionMode="Single"
-                              SelectionChanged="FileListView_SelectionChanged"
-                              AllowDrop="True" DragOver="FileList_DragOver" Drop="FileList_Drop"
-                              KeyDown="FileListView_KeyDown">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                <Setter Property="Padding" Value="4,2" />
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Padding="0,4">
-                                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{Binding DurationText}" FontSize="11"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Button Content="＋ Add" Click="AddFilesButton_Click" Padding="8,2" />
-                        <Button Content="－" Click="RemoveFileButton_Click" Padding="8,2">
-                            <ToolTipService.ToolTip>
-                                <ToolTip Content="Remove selected" />
-                            </ToolTipService.ToolTip>
-                        </Button>
-                        <Button Content="Clear" Click="ClearFilesButton_Click" Padding="8,2" />
-                    </StackPanel>
-                    <TextBlock Grid.Row="3" Text="Drop audio files here"
-                               FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </Grid>
-            </Border>
-
-            <Grid Grid.Column="1">
+        <!-- Navigation rail (Media Player style) -->
+        <Grid Grid.Column="0" Margin="0,0,8,0">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0" Spacing="2">
+                <Button x:Name="NavPlayerButton" Style="{StaticResource RailButton}" Click="NavPlayerButton_Click">
+                    <ToolTipService.ToolTip>
+                        <ToolTip Content="Player" />
+                    </ToolTipService.ToolTip>
+                    <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="18" />
+                </Button>
+                <Button x:Name="NavEqButton" Style="{StaticResource RailButton}" Click="NavEqButton_Click">
+                    <ToolTipService.ToolTip>
+                        <ToolTip Content="Effects / EQ" />
+                    </ToolTipService.ToolTip>
+                    <FontIcon Glyph="&#xE9E9;" FontFamily="Segoe MDL2 Assets" FontSize="18" />
+                </Button>
+            </StackPanel>
+            <Button x:Name="NavSettingsButton" Grid.Row="2" Style="{StaticResource RailButton}" Click="NavSettingsButton_Click">
+                <ToolTipService.ToolTip>
+                    <ToolTip Content="Settings" />
+                </ToolTipService.ToolTip>
+                <FontIcon Glyph="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="18" />
+            </Button>
+        </Grid>
+
+        <!-- Main column -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0" Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="2" Margin="0,0,0,6">
-                <controls:WaveformControl x:Name="Waveform" SeekRequested="Waveform_SeekRequested" />
-            </Border>
+            <!-- Toolbar -->
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                <Button x:Name="OpenButton" Click="OpenButton_Click" Padding="8,6">
+                    <ToolTipService.ToolTip>
+                        <ToolTip Content="Open audio file" />
+                    </ToolTipService.ToolTip>
+                    <FontIcon Glyph="&#xE8E5;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" />
+                </Button>
+                <Button x:Name="ExportButton" Click="ExportButton_Click" IsEnabled="False" Padding="8,6">
+                    <ToolTipService.ToolTip>
+                        <ToolTip Content="Save edited audio" />
+                    </ToolTipService.ToolTip>
+                    <FontIcon Glyph="&#xE74E;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" />
+                </Button>
+                <TextBlock x:Name="StatusLabel" Text="" VerticalAlignment="Center" Margin="12,0,0,0"
+                           Foreground="#7C9EFF" HorizontalAlignment="Right" />
+            </StackPanel>
 
+            <!-- Views -->
             <Grid Grid.Row="1">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+                <!-- Player view: queue + controls -->
+                <Grid x:Name="PlayerView">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="230" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
 
-                <!-- Tempo -->
-                <Border x:Name="TempoCard" Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
-                    <StackPanel>
-                        <TextBlock Text="Tempo (speed, keeps pitch)" Style="{StaticResource CardHeader}" />
-                        <StackPanel Orientation="Horizontal">
-                            <Slider x:Name="TempoSlider" Minimum="25" Maximum="200" Value="100"
-                                    Width="170" TickFrequency="5" StepFrequency="1"
-                                    ValueChanged="TempoSlider_ValueChanged" />
-                            <TextBlock x:Name="TempoLabel" Text="100%" Style="{StaticResource ValueLabel}" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                            <Button Content="0.5x" Tag="50" Click="TempoPreset_Click" Padding="8,2" />
-                            <Button Content="0.75x" Tag="75" Click="TempoPreset_Click" Padding="8,2" />
-                            <Button Content="1x" Tag="100" Click="TempoPreset_Click" Padding="8,2" />
-                            <Button Content="1.25x" Tag="125" Click="TempoPreset_Click" Padding="8,2" />
-                            <Button Content="1.5x" Tag="150" Click="TempoPreset_Click" Padding="8,2" />
-                        </StackPanel>
-                        <Button Content="Reset tempo" Click="ResetTempo_Click" HorizontalAlignment="Center" />
-                    </StackPanel>
-                </Border>
+                    <!-- Queue sidebar -->
+                    <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,6,6" Padding="8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Queue" Style="{StaticResource CardHeader}" />
+                            <ListView Grid.Row="1" x:Name="FileListView" SelectionMode="Single"
+                                      SelectionChanged="FileListView_SelectionChanged"
+                                      AllowDrop="True" DragOver="FileList_DragOver" Drop="FileList_Drop"
+                                      KeyDown="FileListView_KeyDown">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem">
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Padding" Value="4,2" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Padding="0,4">
+                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding DurationText}" FontSize="11"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
+                                <Button Click="AddFilesButton_Click" Padding="8,2">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Add files to the queue" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                </Button>
+                                <Button Click="RemoveFileButton_Click" Padding="8,2">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Remove selected" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                </Button>
+                                <Button Click="ClearFilesButton_Click" Padding="8,2">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Clear queue" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE8E6;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                </Button>
+                            </StackPanel>
+                            <TextBlock Grid.Row="3" Text="Drop audio files here"
+                                       FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </Grid>
+                    </Border>
 
-                <!-- Pitch -->
-                <Border x:Name="PitchCard" Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
-                    <StackPanel>
-                        <TextBlock Text="Pitch (key, keeps tempo)" Style="{StaticResource CardHeader}" />
-                        <StackPanel Orientation="Horizontal">
-                            <Slider x:Name="PitchSlider" Minimum="-12" Maximum="12" Value="0"
-                                    Width="170" TickFrequency="0.5" StepFrequency="0.1"
-                                    ValueChanged="PitchSlider_ValueChanged" />
-                            <TextBlock x:Name="PitchLabel" Text="+0.0 st" Style="{StaticResource ValueLabel}" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                            <Button Content="-5" Tag="-5" Click="PitchPreset_Click" Padding="8,2" />
-                            <Button Content="-2" Tag="-2" Click="PitchPreset_Click" Padding="8,2" />
-                            <Button Content="0" Tag="0" Click="PitchPreset_Click" Padding="8,2" />
-                            <Button Content="+2" Tag="2" Click="PitchPreset_Click" Padding="8,2" />
-                            <Button Content="+5" Tag="5" Click="PitchPreset_Click" Padding="8,2" />
-                        </StackPanel>
-                        <Button Content="Reset pitch" Click="ResetPitch_Click" HorizontalAlignment="Center" />
-                    </StackPanel>
-                </Border>
+                    <Grid Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
 
-                <!-- Loop -->
-                <Border x:Name="LoopCard" Grid.Column="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
-                    <StackPanel>
-                        <TextBlock Text="AB Loop (practice sections)" Style="{StaticResource CardHeader}" />
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                            <Button x:Name="SetAButton" Content="Set A" Click="SetAButton_Click" IsEnabled="False" />
-                            <Button x:Name="SetBButton" Content="Set B" Click="SetBButton_Click" IsEnabled="False" />
-                            <Button x:Name="ClearLoopButton" Content="Clear" Click="ClearLoopButton_Click" IsEnabled="False" />
-                        </StackPanel>
-                        <TextBlock x:Name="LoopLabel" Text="No loop set" HorizontalAlignment="Center"
-                                   Foreground="#FFC107" Margin="0,4" />
-                        <CheckBox x:Name="LoopCheckBox" Content="Loop A�B" IsEnabled="False"
-                                  Foreground="#E8E8F0" HorizontalAlignment="Center"
-                                  Checked="LoopCheckBox_Changed" Unchecked="LoopCheckBox_Changed" />
+                        <Border Grid.Row="0" Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="2" Margin="0,0,0,6">
+                            <controls:WaveformControl x:Name="Waveform" SeekRequested="Waveform_SeekRequested" />
+                        </Border>
+
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Tempo -->
+                            <Border x:Name="TempoCard" Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Tempo" Style="{StaticResource CardHeader}" VerticalAlignment="Center" Margin="0,0,0,0" />
+                                        <TextBlock x:Name="TempoLabel" Text="100%" Foreground="#7C9EFF" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <Button Click="ResetTempo_Click" Grid.Column="2" Padding="8,2" VerticalAlignment="Center">
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Reset tempo to 100%" />
+                                            </ToolTipService.ToolTip>
+                                            <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                        </Button>
+                                    </Grid>
+                                    <Slider x:Name="TempoSlider" Minimum="25" Maximum="200" Value="100"
+                                            HorizontalAlignment="Stretch" TickFrequency="5" StepFrequency="1"
+                                            ValueChanged="TempoSlider_ValueChanged" />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <Button Content="0.5x" Tag="50" Click="TempoPreset_Click" Padding="8,2" />
+                                        <Button Content="0.75x" Tag="75" Click="TempoPreset_Click" Padding="8,2" />
+                                        <Button Content="1x" Tag="100" Click="TempoPreset_Click" Padding="8,2" />
+                                        <Button Content="1.25x" Tag="125" Click="TempoPreset_Click" Padding="8,2" />
+                                        <Button Content="1.5x" Tag="150" Click="TempoPreset_Click" Padding="8,2" />
+                                    </StackPanel>
+                                    <TextBlock Text="Speed, keeps pitch" FontSize="11" HorizontalAlignment="Center"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Pitch -->
+                            <Border x:Name="PitchCard" Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Pitch" Style="{StaticResource CardHeader}" VerticalAlignment="Center" Margin="0,0,0,0" />
+                                        <TextBlock x:Name="PitchLabel" Text="+0.0 st" Foreground="#7C9EFF" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <Button Click="ResetPitch_Click" Grid.Column="2" Padding="8,2" VerticalAlignment="Center">
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Reset pitch to +0.0 st" />
+                                            </ToolTipService.ToolTip>
+                                            <FontIcon Glyph="&#xE7A7;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                        </Button>
+                                    </Grid>
+                                    <Slider x:Name="PitchSlider" Minimum="-12" Maximum="12" Value="0"
+                                            HorizontalAlignment="Stretch" TickFrequency="0.5" StepFrequency="0.1"
+                                            ValueChanged="PitchSlider_ValueChanged" />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <Button Content="-5" Tag="-5" Click="PitchPreset_Click" Padding="8,2" />
+                                        <Button Content="-2" Tag="-2" Click="PitchPreset_Click" Padding="8,2" />
+                                        <Button Content="0" Tag="0" Click="PitchPreset_Click" Padding="8,2" />
+                                        <Button Content="+2" Tag="2" Click="PitchPreset_Click" Padding="8,2" />
+                                        <Button Content="+5" Tag="5" Click="PitchPreset_Click" Padding="8,2" />
+                                    </StackPanel>
+                                    <TextBlock Text="Key, keeps tempo" FontSize="11" HorizontalAlignment="Center"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Grid Grid.Row="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Reverse -->
+                            <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
+                                <Grid VerticalAlignment="Center">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Reverse" Style="{StaticResource CardHeader}" VerticalAlignment="Center" Margin="0,0,0,0" />
+                                    <TextBlock x:Name="ReverseStateLabel" Text="Off" Foreground="#7C9EFF" FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    <Button x:Name="ReverseButton" Click="ReverseButton_Click" IsEnabled="False"
+                                            FontSize="13" Padding="12,6" Grid.Column="2" VerticalAlignment="Center">
+                                        <ToolTipService.ToolTip>
+                                            <ToolTip Content="Play backwards from the current position" />
+                                        </ToolTipService.ToolTip>
+                                        <FontIcon Glyph="&#xE100;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+
+                            <!-- Loop -->
+                            <Border x:Name="LoopCard" Grid.Column="1" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
+                                <StackPanel>
+                                    <TextBlock Text="Loop" Style="{StaticResource CardHeader}" />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <Button x:Name="SetAButton" Content="A" Click="SetAButton_Click" IsEnabled="False">
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Set loop start (A)" />
+                                            </ToolTipService.ToolTip>
+                                        </Button>
+                                        <Button x:Name="SetBButton" Content="B" Click="SetBButton_Click" IsEnabled="False">
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Set loop end (B)" />
+                                            </ToolTipService.ToolTip>
+                                        </Button>
+                                        <Button x:Name="ClearLoopButton" Click="ClearLoopButton_Click" IsEnabled="False" Padding="8,6">
+                                            <ToolTipService.ToolTip>
+                                                <ToolTip Content="Clear loop" />
+                                            </ToolTipService.ToolTip>
+                                            <FontIcon Glyph="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                                        </Button>
+                                    </StackPanel>
+                                    <TextBlock x:Name="LoopLabel" Text="No loop set" HorizontalAlignment="Center"
+                                               Foreground="#FFC107" Margin="0,4" />
+                                    <CheckBox x:Name="LoopCheckBox" Content="Loop A–B" IsEnabled="False"
+                                              Foreground="#E8E8F0" HorizontalAlignment="Center"
+                                              Checked="LoopCheckBox_Changed" Unchecked="LoopCheckBox_Changed" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Grid>
+
+                <!-- EQ view: unlimited effects chain (Equalizer APO style) -->
+                <ScrollViewer x:Name="EqView" Visibility="Collapsed" VerticalScrollMode="Auto"
+                              VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="4" Padding="0,0,12,0">
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Effects" FontSize="18" FontWeight="SemiBold"
+                                       Foreground="#E8E8F0" VerticalAlignment="Center" />
+                            <Button x:Name="AddEqButton" Grid.Column="1" Click="AddEqButton_Click" Padding="8,6">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Add graphic EQ" />
+                                </ToolTipService.ToolTip>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" />
+                                    <TextBlock Text="EQ" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="AddPreampButton" Grid.Column="2" Click="AddPreampButton_Click" Padding="8,6">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Add preamp (gain)" />
+                                </ToolTipService.ToolTip>
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" />
+                                    <TextBlock Text="Preamp" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <TextBlock x:Name="EffectsEmptyLabel" Text="No effects yet — add a Graphic EQ or Preamp. Blocks apply top to bottom, live and in exports."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                   Visibility="Collapsed" Margin="0,0,0,8" />
+                        <Border Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,8">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Overall Response" Style="{StaticResource CardHeader}" Margin="0,0,0,0" />
+                                <controls:EqCurveControl x:Name="FxCurve" Height="150" />
+                            </StackPanel>
+                        </Border>
+                        <StackPanel x:Name="EffectsPanel" Spacing="0" />
                     </StackPanel>
-                </Border>
+                </ScrollViewer>
             </Grid>
 
-            <!-- 31-band equalizer -->
-            <Border x:Name="EqCard" Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="6" Padding="8">
-                <StackPanel>
-                    <TextBlock Text="31-Band Equalizer (20 Hz � 20 kHz)" Style="{StaticResource CardHeader}" />
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,4">
-                        <CheckBox x:Name="EqEnableCheckBox" Content="Enable EQ" IsChecked="True"
-                                  Foreground="#E8E8F0" VerticalAlignment="Center" Margin="0,0,12,0"
-                                  Checked="EqEnableCheckBox_Changed" Unchecked="EqEnableCheckBox_Changed" />
-                        <TextBlock Text="Preset:" VerticalAlignment="Center" Margin="0,0,6,0" Foreground="#B8B8D0" />
-                        <ComboBox x:Name="EqPresetBox" Width="150" SelectionChanged="EqPresetBox_SelectionChanged" />
-                        <Button Content="Flat" Click="EqFlatButton_Click" Padding="12,2" />
-                        <TextBlock x:Name="EqHintLabel" Text="+/-15 dB per band, 1 dB steps"
-                                   VerticalAlignment="Center" Margin="12,0,0,0" Foreground="#77778A" />
-                    </StackPanel>
-                    <ScrollViewer HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Hidden">
-                        <StackPanel x:Name="EqBandsPanel" Orientation="Horizontal" />
-                    </ScrollViewer>
+            <!-- Bottom player bar (Media Player style) -->
+            <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="0,8,0,0" Padding="10,8">
+                <StackPanel Spacing="2">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="70" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="70" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" x:Name="CurrentTimeLabel" Text="0:00.0" Foreground="#E8E8F0" VerticalAlignment="Center" />
+                        <Slider Grid.Column="1" x:Name="SeekSlider" Minimum="0" Maximum="1000" Value="0"
+                                HorizontalAlignment="Stretch" ValueChanged="SeekSlider_ValueChanged" />
+                        <TextBlock Grid.Column="2" x:Name="TotalTimeLabel" Text="0:00.0" TextAlignment="Right" Foreground="#E8E8F0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="3" x:Name="EffectiveTimeLabel" Text="" Foreground="#7C9EFF" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Border Width="44" Height="44" CornerRadius="6"
+                                    Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="20"
+                                          Foreground="#B8B8D0" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel VerticalAlignment="Center" Spacing="0">
+                                <TextBlock x:Name="FileLabel" Text="No file loaded"
+                                           Foreground="#E8E8F0" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="NextUpLabel" Text=""
+                                           FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Button x:Name="ShuffleButton" Click="ShuffleButton_Click" IsEnabled="False"
+                                    Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Shuffle queue" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon x:Name="ShuffleIcon" Glyph="&#xE8B1;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" />
+                            </Button>
+                            <Button x:Name="PrevButton" Click="PrevButton_Click" IsEnabled="False"
+                                    Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Previous track" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon Glyph="&#xE100;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" />
+                            </Button>
+                            <Button x:Name="PlayButton" Click="PlayButton_Click" IsEnabled="False"
+                                    Width="52" Height="52" CornerRadius="26" Padding="0" BorderThickness="0" Margin="4">
+                                <Button.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#FF8A3D" Offset="0" />
+                                        <GradientStop Color="#B14BE0" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Button.Background>
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Play / pause" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon x:Name="PlayIcon" Glyph="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="22" Foreground="White" />
+                            </Button>
+                            <Button x:Name="StopButton" Click="StopButton_Click" IsEnabled="False"
+                                    Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Stop" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon Glyph="&#xE71A;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" />
+                            </Button>
+                            <Button x:Name="NextButton" Click="NextButton_Click" IsEnabled="False"
+                                    Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Next track" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon Glyph="&#xE101;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" />
+                            </Button>
+                            <Button x:Name="RepeatButton" Click="RepeatButton_Click"
+                                    Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Repeat mode: Off → All → One" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon x:Name="RepeatIcon" Glyph="&#xE8EE;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#77778A" />
+                            </Button>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE992;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" VerticalAlignment="Center" />
+                            <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" Width="110"
+                                    ValueChanged="VolumeSlider_ValueChanged" />
+                        </StackPanel>
+                    </Grid>
                 </StackPanel>
             </Border>
-            </Grid>
         </Grid>
-
-        <!-- Time row -->
-        <Grid Grid.Row="2" Margin="0,4">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="70" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="70" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" x:Name="CurrentTimeLabel" Text="0:00.0" Foreground="#E8E8F0" />
-            <Slider Grid.Column="1" x:Name="SeekSlider" Minimum="0" Maximum="1000" Value="0"
-                    HorizontalAlignment="Stretch" ValueChanged="SeekSlider_ValueChanged" />
-            <TextBlock Grid.Column="2" x:Name="TotalTimeLabel" Text="0:00.0" TextAlignment="Right" Foreground="#E8E8F0" />
-            <TextBlock Grid.Column="3" x:Name="EffectiveTimeLabel" Text="" Foreground="#7C9EFF" Margin="8,0,0,0" />
-        </Grid>
-
-        <!-- Transport bar -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
-            <Button x:Name="PrevButton" Content="&#x23EE; Prev" Click="PrevButton_Click" IsEnabled="False" FontSize="14" Padding="20,8" />
-            <Button x:Name="PlayButton" Content="? Play" Click="PlayButton_Click" IsEnabled="False"
-                    FontSize="14" Padding="20,8" Background="#2E7D32" BorderBrush="#2E7D32" />
-            <Button x:Name="StopButton" Content="? Stop" Click="StopButton_Click" IsEnabled="False" FontSize="14" Padding="20,8" />
-            <Button x:Name="NextButton" Content="Next &#x23ED;" Click="NextButton_Click" IsEnabled="False" FontSize="14" Padding="20,8" />
-            <Button x:Name="ReverseButton" Content="? Reverse" Click="ReverseButton_Click" IsEnabled="False"
-                    FontSize="14" Padding="20,8">
-                <ToolTipService.ToolTip>
-                    <ToolTip Content="Play backwards from the current position" />
-                </ToolTipService.ToolTip>
-            </Button>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
-                <TextBlock Text="&#x1F50A;" VerticalAlignment="Center" />
-                <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" Width="120"
-                        ValueChanged="VolumeSlider_ValueChanged" />
-            </StackPanel>
-        </StackPanel>
     </Grid>
     </Border>
     </Grid>
