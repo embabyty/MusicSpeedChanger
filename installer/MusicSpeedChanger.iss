@@ -1,11 +1,11 @@
 ; Music Speed Changer — Inno Setup installer
-; Builds Setup-MusicSpeedChanger-2.1.2.exe from the published WinUI 3 build.
+; Builds Setup-MusicSpeedChanger-2.1.3.exe from the published WinUI 3 build.
 ; Publish first (WinUI unpackaged self-contained ships the whole folder):
 ;   dotnet publish src/MusicSpeedChanger/MusicSpeedChanger.csproj -c Release -p:Platform=x64 -o dist/publish
 
 #define MyAppName "Music Speed Changer"
 #define MyAppExeName "MusicSpeedChanger.exe"
-#define MyAppVersion "2.1.2"
+#define MyAppVersion "2.1.3"
 #define MyAppPublisher "Music Speed Changer"
 
 [Setup]

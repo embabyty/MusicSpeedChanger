@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MusicSpeedChanger.Services;
 
@@ -57,6 +58,13 @@ public sealed class AppSettings
     public double LastVolumePercent { get; set; } = 80;
     public float[]? LastEqGains { get; set; }
     public bool LastEqEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Round-trips keys this build doesn't know (e.g. beta-channel fields), so
+    /// running stable never wipes settings written by the beta app.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extra { get; set; }
 
     public static string FilePath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
