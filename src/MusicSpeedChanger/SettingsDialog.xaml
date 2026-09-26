@@ -31,6 +31,17 @@
             <TextBlock x:Name="UpdateStatusLabel" TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
+            <!-- Beta channel (Patreon-gated, installs side-by-side with stable) -->
+            <TextBlock Text="Beta channel" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="Beta builds are gated for Patreon supporters. Switching verifies your membership, then installs the beta next to this app."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <Button x:Name="SwitchToBetaButton" Content="Switch to Beta" Click="SwitchToBetaButton_Click"
+                        Style="{ThemeResource AccentButtonStyle}" />
+            </StackPanel>
+            <TextBlock x:Name="BetaStatusLabel" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
             <!-- Speed & pitch -->
             <TextBlock Text="Speed &amp; pitch" Style="{StaticResource SectionHeader}" />
             <NumberBox x:Name="DefaultTempoBox" Header="Default tempo (%)"

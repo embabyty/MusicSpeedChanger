@@ -115,6 +115,74 @@ public sealed partial class SettingsDialog : ContentDialog
             InstallUpdateRequested?.Invoke(this, _pendingUpdate);
     }
 
+    private bool _switching;
+
+    /// <summary>
+    /// Patreon-gated switch to beta: verifies membership (stored login first,
+    /// browser login otherwise), then offers the newest beta installer, which
+    /// lives side-by-side with this stable app.
+    /// </summary>
+    private async void SwitchToBetaButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_switching) return;
+        _switching = true;
+        SwitchToBetaButton.IsEnabled = false;
+        InstallUpdateButton.Visibility = Visibility.Collapsed;
+        try
+        {
+            // A stored login re-verifies silently — no browser needed.
+            if (!Draft.BetaAccessUnlocked && !string.IsNullOrEmpty(Draft.PatreonRefreshToken))
+            {
+                BetaStatusLabel.Text = "Re-verifying Patreon membership…";
+                var silent = await PatreonAuthService.RefreshAndVerifyAsync(Draft.PatreonRefreshToken);
+                if (silent != null)
+                {
+                    Draft.BetaAccessUnlocked = true;
+                    Draft.PatreonRefreshToken = silent.RefreshToken;
+                    Draft.PatreonFullName = silent.FullName;
+                }
+                else
+                {
+                    Draft.BetaAccessUnlocked = false;
+                    Draft.PatreonRefreshToken = null;
+                    Draft.PatreonFullName = null;
+                }
+            }
+            if (!Draft.BetaAccessUnlocked)
+            {
+                var progress = new Progress<string>(s => BetaStatusLabel.Text = s);
+                var (account, error) = await PatreonAuthService.LoginAsync(progress);
+                if (account == null)
+                {
+                    BetaStatusLabel.Text = error ?? "Login didn't complete.";
+                    return;
+                }
+                Draft.BetaAccessUnlocked = true;
+                Draft.PatreonRefreshToken = account.RefreshToken;
+                Draft.PatreonFullName = account.FullName;
+            }
+            BetaStatusLabel.Text = "Checking for beta builds…";
+            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "", includeBeta: true);
+            if (info == null || !info.IsBeta)
+            {
+                BetaStatusLabel.Text = "No beta build available right now — you're up to date.";
+                return;
+            }
+            _pendingUpdate = info;
+            BetaStatusLabel.Text = $"Beta {info.Version} is available.\n{info.Notes}";
+            InstallUpdateButton.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            BetaStatusLabel.Text = $"Beta switch failed: {ex.Message}";
+        }
+        finally
+        {
+            _switching = false;
+            SwitchToBetaButton.IsEnabled = true;
+        }
+    }
+
     private static Windows.UI.Color ParseHex(string hex, Windows.UI.Color fallback)
     {
         try

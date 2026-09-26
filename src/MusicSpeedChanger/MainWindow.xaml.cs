@@ -246,6 +246,15 @@ public sealed partial class MainWindow : Window
         var dlg = new SettingsDialog(_settings) { XamlRoot = Content.XamlRoot };
         dlg.InstallUpdateRequested += async (_, info) =>
         {
+            // A verified Patreon link travels with the install, so a fresh beta
+            // build opens straight in via silent re-verification (same settings file).
+            if (dlg.Draft.BetaAccessUnlocked)
+            {
+                _settings.BetaAccessUnlocked = true;
+                _settings.PatreonRefreshToken = dlg.Draft.PatreonRefreshToken;
+                _settings.PatreonFullName = dlg.Draft.PatreonFullName;
+                _settings.Save();
+            }
             dlg.Hide();
             await DownloadAndInstallAsync(info);
         };

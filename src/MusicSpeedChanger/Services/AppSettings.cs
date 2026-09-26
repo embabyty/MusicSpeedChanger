@@ -17,6 +17,11 @@ public sealed class AppSettings
     // ----- Updates -----
     public bool AutoCheckUpdates { get; set; } = true;
     public string UpdateFeedUrl { get; set; } = DefaultFeedUrl;
+    /// <summary>True after a verified Patreon login (unlocks the beta switch).</summary>
+    public bool BetaAccessUnlocked { get; set; } = false;
+    /// <summary>Patreon OAuth refresh token (plaintext, like a session cookie).</summary>
+    public string? PatreonRefreshToken { get; set; }
+    public string? PatreonFullName { get; set; }
 
     // ----- Speed & pitch -----
     public double DefaultTempoPercent { get; set; } = 100;
@@ -119,6 +124,8 @@ public sealed class AppSettings
         LastVolumePercent = Math.Clamp(LastVolumePercent, 0, 100);
         if (string.IsNullOrWhiteSpace(UpdateFeedUrl)) UpdateFeedUrl = DefaultFeedUrl;
         if (string.IsNullOrWhiteSpace(CustomAccentHex)) CustomAccentHex = "#2E7D32";
+        if (string.IsNullOrWhiteSpace(PatreonRefreshToken)) PatreonRefreshToken = null;
+        if (string.IsNullOrWhiteSpace(PatreonFullName)) PatreonFullName = null;
         if (LastEqGains != null && LastEqGains.Length != Audio.GraphicEqualizer.BandCount)
             LastEqGains = null;
     }
