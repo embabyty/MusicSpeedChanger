@@ -3,13 +3,14 @@ using System;
 namespace MusicSpeedChanger.Audio;
 
 /// <summary>
-/// 31-band ISO 1/3-octave graphic equalizer (20 Hz – 20 kHz).
+/// ISO graphic equalizer (31-band 1/3-octave or 15-band 2/3-octave).
 /// Pure DSP: cascaded RBJ peaking biquads, one chain per channel.
 /// Thread-safe for one reader + one writer via lock; same pattern as the rest of the engine.
 /// </summary>
 public sealed class GraphicEqualizer
 {
     public const int BandCount = 31;
+    public const int BandCount15 = 15;
 
     /// <summary>ISO 1/3-octave center frequencies, Hz.</summary>
     public static readonly float[] CenterFrequencies =
@@ -27,15 +28,76 @@ public sealed class GraphicEqualizer
         "2.5k", "3.15k", "4k", "5k", "6.3k", "8k", "10k", "12.5k", "16k", "20k"
     };
 
+    /// <summary>ISO 2/3-octave center frequencies, Hz.</summary>
+    public static readonly float[] Centers15 =
+    {
+        25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000
+    };
+
+    public static readonly string[] ShortLabels15 =
+    {
+        "25", "40", "63", "100", "160", "250", "400", "630", "1k", "1.6k",
+        "2.5k", "4k", "6.3k", "10k", "16k"
+    };
+
     public const float MinGainDb = -15f;
     public const float MaxGainDb = +15f;
 
     /// <summary>Q for 1/3-octave proportional filters.</summary>
-    private const double Q = 4.318;
+    private const double Q31 = 4.318;
+
+    /// <summary>Q for 2/3-octave proportional filters.</summary>
+    private const double Q15 = 2.14;
+
+    public static float[] CentersForBands(int bands) => bands switch
+    {
+        BandCount => CenterFrequencies,
+        BandCount15 => Centers15,
+        _ => throw new ArgumentOutOfRangeException(nameof(bands), "Only 15 or 31 bands are supported."),
+    };
+
+    public static string[] LabelsForBands(int bands) => bands switch
+    {
+        BandCount => ShortLabels,
+        BandCount15 => ShortLabels15,
+        _ => throw new ArgumentOutOfRangeException(nameof(bands), "Only 15 or 31 bands are supported."),
+    };
+
+    public static double QForBands(int bands) => bands switch
+    {
+        BandCount => Q31,
+        BandCount15 => Q15,
+        _ => throw new ArgumentOutOfRangeException(nameof(bands), "Only 15 or 31 bands are supported."),
+    };
+
+    /// <summary>Map gains between band layouts via log-frequency linear interpolation.</summary>
+    public static float[] ResampleGains(float[] srcFreqs, float[] srcGains, float[] dstFreqs)
+    {
+        if (srcFreqs == null || srcGains == null || dstFreqs == null)
+            throw new ArgumentNullException();
+        if (srcFreqs.Length != srcGains.Length)
+            throw new ArgumentException("Source freqs and gains must match.");
+        var dst = new float[dstFreqs.Length];
+        for (int i = 0; i < dstFreqs.Length; i++)
+        {
+            double f = Math.Log(dstFreqs[i]);
+            if (f <= Math.Log(srcFreqs[0])) { dst[i] = srcGains[0]; continue; }
+            if (f >= Math.Log(srcFreqs[^1])) { dst[i] = srcGains[^1]; continue; }
+            int j = 0;
+            while (j < srcFreqs.Length - 2 && Math.Log(srcFreqs[j + 1]) < f) j++;
+            double f0 = Math.Log(srcFreqs[j]), f1 = Math.Log(srcFreqs[j + 1]);
+            double t = (f - f0) / Math.Max(1e-9, f1 - f0);
+            dst[i] = (float)(srcGains[j] + t * (srcGains[j + 1] - srcGains[j]));
+        }
+        return dst;
+    }
 
     private readonly object _lock = new();
-    private readonly float[] _gains = new float[BandCount];
-    private readonly bool[] _bandActive = new bool[BandCount];
+    private readonly float[] _centers;
+    private readonly int _bandCount;
+    private readonly double _q;
+    private readonly float[] _gains;
+    private readonly bool[] _bandActive;
     private Biquad[][] _chains = Array.Empty<Biquad[]>();
 
     private int _sampleRate;
@@ -43,9 +105,22 @@ public sealed class GraphicEqualizer
 
     public int SampleRate => _sampleRate;
     public int Channels => _channels;
+    public int Bands => _bandCount;
 
     public GraphicEqualizer(int sampleRate, int channels)
+        : this(sampleRate, channels, CenterFrequencies, Q31)
     {
+    }
+
+    public GraphicEqualizer(int sampleRate, int channels, float[] centers, double q)
+    {
+        if (centers == null || centers.Length is < 1 or > 64)
+            throw new ArgumentOutOfRangeException(nameof(centers));
+        _centers = (float[])centers.Clone();
+        _bandCount = centers.Length;
+        _q = q;
+        _gains = new float[_bandCount];
+        _bandActive = new bool[_bandCount];
         Configure(sampleRate, channels);
     }
 
@@ -59,7 +134,7 @@ public sealed class GraphicEqualizer
             _channels = channels;
             _chains = new Biquad[channels][];
             for (int c = 0; c < channels; c++)
-                _chains[c] = new Biquad[BandCount];
+                _chains[c] = new Biquad[_bandCount];
             RecomputeAll();
         }
     }
@@ -85,8 +160,8 @@ public sealed class GraphicEqualizer
     {
         lock (_lock)
         {
-            var copy = new float[BandCount];
-            Array.Copy(_gains, copy, BandCount);
+            var copy = new float[_bandCount];
+            Array.Copy(_gains, copy, _bandCount);
             return copy;
         }
     }
@@ -94,10 +169,10 @@ public sealed class GraphicEqualizer
     public void SetGains(float[] gains)
     {
         if (gains == null) throw new ArgumentNullException(nameof(gains));
-        if (gains.Length != BandCount) throw new ArgumentException($"Need {BandCount} gains.", nameof(gains));
+        if (gains.Length != _bandCount) throw new ArgumentException($"Need {_bandCount} gains.", nameof(gains));
         lock (_lock)
         {
-            for (int i = 0; i < BandCount; i++)
+            for (int i = 0; i < _bandCount; i++)
                 _gains[i] = Math.Clamp(gains[i], MinGainDb, MaxGainDb);
             RecomputeAll();
         }
@@ -107,7 +182,7 @@ public sealed class GraphicEqualizer
     {
         lock (_lock)
         {
-            Array.Clear(_gains, 0, BandCount);
+            Array.Clear(_gains, 0, _bandCount);
             RecomputeAll();
         }
     }
@@ -119,7 +194,7 @@ public sealed class GraphicEqualizer
         {
             lock (_lock)
             {
-                for (int i = 0; i < BandCount; i++)
+                for (int i = 0; i < _bandCount; i++)
                     if (Math.Abs(_gains[i]) > 0.001f) return false;
                 return true;
             }
@@ -134,7 +209,7 @@ public sealed class GraphicEqualizer
         {
             if (_chains.Length == 0) return;
             bool anyActive = false;
-            for (int i = 0; i < BandCount; i++)
+            for (int i = 0; i < _bandCount; i++)
                 if (_bandActive[i]) { anyActive = true; break; }
             if (!anyActive) return;
 
@@ -146,7 +221,7 @@ public sealed class GraphicEqualizer
                 {
                     float s = buffer[offset + f * channels + c];
                     var chain = _chains[c];
-                    for (int b = 0; b < BandCount; b++)
+                    for (int b = 0; b < _bandCount; b++)
                     {
                         if (_bandActive[b])
                             s = chain[b].Step(s);
@@ -159,30 +234,30 @@ public sealed class GraphicEqualizer
 
     private void RecomputeAll()
     {
-        for (int b = 0; b < BandCount; b++)
+        for (int b = 0; b < _bandCount; b++)
             UpdateBand(b);
     }
 
     private void UpdateBand(int band)
     {
         float gain = _gains[band];
-        float freq = CenterFrequencies[band];
+        float freq = _centers[band];
         // Bands at/above Nyquist can't be represented — leave them pass-through.
         bool usable = Math.Abs(gain) > 0.001f && freq < _sampleRate * 0.45f;
         _bandActive[band] = usable;
         for (int c = 0; c < _channels; c++)
         {
             if (usable)
-                _chains[c][band].SetPeaking(_sampleRate, freq, Q, gain);
+                _chains[c][band].SetPeaking(_sampleRate, freq, _q, gain);
             else
                 _chains[c][band].Reset();
         }
     }
 
-    private static void CheckBand(int band)
+    private void CheckBand(int band)
     {
-        if (band < 0 || band >= BandCount)
-            throw new ArgumentOutOfRangeException(nameof(band), $"Band must be 0..{BandCount - 1}.");
+        if (band < 0 || band >= _bandCount)
+            throw new ArgumentOutOfRangeException(nameof(band), $"Band must be 0..{_bandCount - 1}.");
     }
 
     /// <summary>RBJ peaking-EQ biquad (Direct Form I).</summary>

@@ -31,15 +31,26 @@
             <TextBlock x:Name="UpdateStatusLabel" TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
-            <!-- Beta channel (Patreon-gated, installs side-by-side with stable) -->
-            <TextBlock Text="Beta channel" Style="{StaticResource SectionHeader}" />
-            <TextBlock Text="Beta builds are gated for Patreon supporters. Switching verifies your membership, then installs the beta next to this app."
+            <!-- Supporter & beta (betas are Patreon-gated) -->
+            <TextBlock Text="Supporter &amp; beta" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="Beta builds are available to Patreon supporters. Log in to verify membership and unlock them."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            <CheckBox x:Name="BetaUpdatesBox" Content="Include beta updates" />
+            <ComboBox x:Name="InsiderChannelBox" Header="Insider Hub channel (beta builds, Patreon supporters)"
+                      Margin="0,4,0,0">
+                <x:String>Beta</x:String>
+                <x:String>Canary</x:String>
+            </ComboBox>
+            <TextBlock Text="Canary ships weekly from the canary branch; startup checks follow this channel."
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                <Button x:Name="SwitchToBetaButton" Content="Switch to Beta" Click="SwitchToBetaButton_Click"
+                <Button x:Name="PatreonLoginButton" Content="Login with Patreon" Click="PatreonLoginButton_Click"
                         Style="{ThemeResource AccentButtonStyle}" />
+                <Button x:Name="PatreonUnlinkButton" Content="Unlink" Click="PatreonUnlinkButton_Click"
+                        Visibility="Collapsed" />
+                <Button x:Name="PatreonButton" Content="Open Patreon page" Click="PatreonButton_Click" />
             </StackPanel>
-            <TextBlock x:Name="BetaStatusLabel" TextWrapping="Wrap"
+            <TextBlock x:Name="PatreonStatusLabel" TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
             <!-- Speed & pitch -->
@@ -63,7 +74,7 @@
             <NumberBox x:Name="WaveformPeaksBox" Header="Waveform detail (bars, applies to next file)"
                        Minimum="100" Maximum="8000" SpinButtonPlacementMode="Inline" />
             <CheckBox x:Name="ClickToSeekBox" Content="Click / drag the waveform to seek" />
-            <CheckBox x:Name="RememberListBox" Content="Remember the queue between sessions" />
+            <CheckBox x:Name="RememberListBox" Content="Remember the files between sessions" />
 
             <!-- Effects -->
             <TextBlock Text="Effects" Style="{StaticResource SectionHeader}" />
@@ -79,7 +90,16 @@
             <TextBlock Text="Custom accent (when above is off)"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <ColorPicker x:Name="CustomAccentPicker"
-                         IsAlphaEnabled="False" IsHexInputVisible="True" />
+                          IsAlphaEnabled="False" IsHexInputVisible="True" />
+
+            <!-- About / owner -->
+            <TextBlock Text="About" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="Music Speed Changer by EmAppleFlagship (Patreon)."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <Button x:Name="EmailOwnerButton" Content="Email the owner" Click="EmailOwnerButton_Click" />
+            </StackPanel>
+            <TextBlock x:Name="OwnerEmailLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </StackPanel>
     </ScrollViewer>
 </ContentDialog>

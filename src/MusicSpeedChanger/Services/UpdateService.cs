@@ -10,7 +10,15 @@ using System.Threading.Tasks;
 namespace MusicSpeedChanger.Services;
 
 /// <summary>Version info for an available update.</summary>
-public sealed record UpdateInfo(Version Version, string Notes, string DownloadUrl, string FileName, bool IsBeta);
+public sealed record UpdateInfo(
+    Version Version,
+    string Notes,
+    string DownloadUrl,
+    string FileName,
+    bool IsBeta,
+    bool IsCanary = false,
+    string Tag = "",
+    DateTimeOffset PublishedAt = default);
 
 /// <summary>
 /// Checks a feed for newer releases and downloads the installer.
@@ -45,6 +53,19 @@ public static class UpdateService
                 return info.Trim();
             }
             return CurrentVersion.ToString();
+        }
+    }
+
+    /// <summary>Build channel of the running app: "Canary", "Beta", or "Stable".</summary>
+    public static string CurrentChannel
+    {
+        get
+        {
+            if (DisplayVersion.Contains("canary", StringComparison.OrdinalIgnoreCase))
+                return "Canary";
+            if (DisplayVersion.IndexOf("beta", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Beta";
+            return "Stable";
         }
     }
 
@@ -95,6 +116,50 @@ public static class UpdateService
         return single;
     }
 
+    /// <summary>
+    /// Lists the newest Beta (non-Canary prerelease) and Canary releases from the
+    /// GitHub releases list, regardless of whether they are newer than the running
+    /// build. Weekly Canary builds share the base version, so a plain version
+    /// comparison would miss them — the Hub shows both cards with notes and lets
+    /// the supporter install either one.
+    /// </summary>
+    public static async Task<(UpdateInfo? Beta, UpdateInfo? Canary)> GetInsiderUpdatesAsync(
+        string feedUrl, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(feedUrl)) return (null, null);
+        string? listUrl = IsGitHubListUrl(feedUrl) ? feedUrl : GetGitHubListUrl(feedUrl);
+        if (listUrl == null) return (null, null);
+
+        using var listResponse = await Http.GetAsync(listUrl, ct).ConfigureAwait(false);
+        listResponse.EnsureSuccessStatusCode();
+        using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        var array = listDoc.RootElement;
+        if (array.ValueKind != JsonValueKind.Array) return (null, null);
+
+        UpdateInfo? bestBeta = null, bestCanary = null;
+        foreach (var entry in array.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object) continue;
+            if (entry.TryGetProperty("draft", out var draft) &&
+                draft.ValueKind == JsonValueKind.True) continue;
+            var info = ParseGitHubRelease(entry);
+            if (info == null || !info.IsBeta) continue;
+            if (info.IsCanary)
+            {
+                if (bestCanary == null || CompareReleases(info, bestCanary) > 0 ||
+                    (CompareReleases(info, bestCanary) == 0 && info.PublishedAt > bestCanary.PublishedAt))
+                    bestCanary = info;
+            }
+            else
+            {
+                if (bestBeta == null || CompareReleases(info, bestBeta) > 0 ||
+                    (CompareReleases(info, bestBeta) == 0 && info.PublishedAt > bestBeta.PublishedAt))
+                    bestBeta = info;
+            }
+        }
+        return (bestBeta, bestCanary);
+    }
+
     public static async Task DownloadAsync(
         string url, string destination, IProgress<double>? progress = null, CancellationToken ct = default)
     {
@@ -122,8 +187,14 @@ public static class UpdateService
         string tagText = tag.GetString() ?? "";
         if (!TryParseVersion(tagText, out var version)) return null;
         string notes = root.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "";
-        bool isBeta = (root.TryGetProperty("prerelease", out var pre) &&
-                       pre.ValueKind == JsonValueKind.True) || IsBetaTag(tagText);
+        bool isCanary = IsCanaryTag(tagText);
+        bool isBeta = isCanary ||
+            (root.TryGetProperty("prerelease", out var pre) &&
+             pre.ValueKind == JsonValueKind.True) || IsBetaTag(tagText);
+        DateTimeOffset publishedAt = default;
+        if (root.TryGetProperty("published_at", out var pub) &&
+            pub.ValueKind == JsonValueKind.String)
+            DateTimeOffset.TryParse(pub.GetString(), out publishedAt);
 
         if (root.TryGetProperty("assets", out var assets))
         {
@@ -143,7 +214,7 @@ public static class UpdateService
             {
                 string name = chosen.Value.GetProperty("name").GetString() ?? "Setup update.exe";
                 string url = chosen.Value.GetProperty("browser_download_url").GetString() ?? "";
-                if (url.Length > 0) return new UpdateInfo(version, notes, url, name, isBeta);
+                if (url.Length > 0) return new UpdateInfo(version, notes, url, name, isBeta, isCanary, tagText, publishedAt);
             }
         }
         return null;
@@ -161,7 +232,8 @@ public static class UpdateService
         string file = root.TryGetProperty("fileName", out var f) && f.GetString() is string s && s.Length > 0
             ? s
             : "Setup update.exe";
-        return new UpdateInfo(version, notes, url, file, IsBetaTag(versionText));
+        bool isCanary = IsCanaryTag(versionText);
+        return new UpdateInfo(version, notes, url, file, IsBetaTag(versionText) || isCanary, isCanary, versionText);
     }
 
     /// <summary>True when the feed URL points at a GitHub /releases list (JSON array).</summary>
@@ -206,6 +278,11 @@ public static class UpdateService
 
     private static bool IsNewerThanCurrent(UpdateInfo info) =>
         CompareReleases(info, new UpdateInfo(CurrentVersion, "", "", "", IsBeta: false)) > 0;
+
+    /// <summary>Weekly Canary builds ship with "canary" in the tag (e.g. v3.0.0-canary.1).</summary>
+    internal static bool IsCanaryTag(string? text) =>
+        !string.IsNullOrWhiteSpace(text) &&
+        text.Contains("canary", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Heuristic: prerelease markers like "-beta.1", "+build", "alpha", "rc".</summary>
     private static bool IsBetaTag(string? text)
