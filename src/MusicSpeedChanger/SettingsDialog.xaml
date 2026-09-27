@@ -36,6 +36,13 @@
             <TextBlock Text="Beta builds are available to Patreon supporters. Log in to verify membership and unlock them."
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
             <CheckBox x:Name="BetaUpdatesBox" Content="Include beta updates" />
+            <ComboBox x:Name="InsiderChannelBox" Header="Insider Hub channel (beta builds, Patreon supporters)"
+                      Margin="0,4,0,0">
+                <x:String>Beta</x:String>
+                <x:String>Canary</x:String>
+            </ComboBox>
+            <TextBlock Text="Canary ships weekly from the canary branch; startup checks follow this channel."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
                 <Button x:Name="PatreonLoginButton" Content="Login with Patreon" Click="PatreonLoginButton_Click"
                         Style="{ThemeResource AccentButtonStyle}" />

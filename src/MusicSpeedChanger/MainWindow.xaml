@@ -78,6 +78,13 @@
                     </ToolTipService.ToolTip>
                     <FontIcon Glyph="&#xE9E9;" FontFamily="Segoe MDL2 Assets" FontSize="18" />
                 </Button>
+                <Button x:Name="NavInsiderButton" Style="{StaticResource RailButton}" Click="NavInsiderButton_Click"
+                        Visibility="Collapsed">
+                    <ToolTipService.ToolTip>
+                        <ToolTip Content="MSC Insider Hub (Patreon)" />
+                    </ToolTipService.ToolTip>
+                    <FontIcon Glyph="&#xEC24;" FontFamily="Segoe MDL2 Assets" FontSize="18" />
+                </Button>
             </StackPanel>
             <Button x:Name="NavSettingsButton" Grid.Row="2" Style="{StaticResource RailButton}" Click="NavSettingsButton_Click">
                 <ToolTipService.ToolTip>
@@ -380,6 +387,73 @@
                             </StackPanel>
                         </Border>
                         <StackPanel x:Name="EffectsPanel" Spacing="0" />
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Insider view: Beta + weekly Canary builds for Patreon supporters -->
+                <ScrollViewer x:Name="InsiderView" Visibility="Collapsed" VerticalScrollMode="Auto"
+                              VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="4" Padding="0,0,12,0">
+                        <TextBlock Text="MSC Insider Hub" FontSize="18" FontWeight="SemiBold"
+                                   Foreground="#E8E8F0" VerticalAlignment="Center" />
+                        <TextBlock Text="Beta milestones and weekly Canary builds for Patreon supporters."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                   Margin="0,0,0,4" />
+
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,8">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Your insider status" Style="{StaticResource CardHeader}" Margin="0,0,0,0" />
+                                <TextBlock x:Name="InsiderPatreonLabel" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock x:Name="InsiderCurrentLabel" TextWrapping="Wrap"
+                                           Foreground="#E8E8F0" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,8">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Update channel" Style="{StaticResource CardHeader}" Margin="0,0,0,0" />
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <RadioButton x:Name="InsiderBetaRadio" Content="Beta" Checked="InsiderChannel_Checked" />
+                                    <RadioButton x:Name="InsiderCanaryRadio" Content="Canary (weekly)" Checked="InsiderChannel_Checked" />
+                                </StackPanel>
+                                <TextBlock Text="Canary builds ship every week from the canary branch. Startup update checks follow this channel."
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" FontSize="11" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,8">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Beta" Style="{StaticResource CardHeader}" Margin="0,0,0,0" />
+                                <TextBlock x:Name="InsiderBetaStatus" Text="Not checked yet."
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="InsiderBetaNotes" TextWrapping="Wrap" MaxHeight="120"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <Button x:Name="InsiderBetaInstallButton" Content="Download &amp; install Beta"
+                                        Visibility="Collapsed" Click="InsiderBetaInstallButton_Click"
+                                        Style="{ThemeResource AccentButtonStyle}" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,8">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Canary (weekly)" Style="{StaticResource CardHeader}" Margin="0,0,0,0" />
+                                <TextBlock x:Name="InsiderCanaryStatus" Text="Not checked yet."
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                <TextBlock x:Name="InsiderCanaryNotes" TextWrapping="Wrap" MaxHeight="120"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <Button x:Name="InsiderCanaryInstallButton" Content="Download &amp; install Canary"
+                                        Visibility="Collapsed" Click="InsiderCanaryInstallButton_Click"
+                                        Style="{ThemeResource AccentButtonStyle}" HorizontalAlignment="Left" />
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+                            <Button x:Name="InsiderCheckButton" Content="Check for insider builds" Click="InsiderCheckButton_Click" />
+                            <Button x:Name="InsiderPatreonButton" Content="Open Patreon page" Click="InsiderPatreonButton_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="InsiderStatusLabel" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                 </ScrollViewer>
             </Grid>

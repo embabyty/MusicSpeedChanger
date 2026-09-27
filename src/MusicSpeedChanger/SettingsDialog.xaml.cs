@@ -30,6 +30,8 @@ public sealed partial class SettingsDialog : ContentDialog
         AutoCheckSwitch.IsOn = Draft.AutoCheckUpdates;
         FeedUrlBox.Text = Draft.UpdateFeedUrl;
         BetaUpdatesBox.IsChecked = Draft.IncludeBetaUpdates;
+        InsiderChannelBox.SelectedItem = string.Equals(Draft.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase)
+            ? "Canary" : "Beta";
         UpdatePatreonUi();
 
         DefaultTempoBox.Value = Draft.DefaultTempoPercent;
@@ -60,6 +62,8 @@ public sealed partial class SettingsDialog : ContentDialog
         Draft.AutoCheckUpdates = AutoCheckSwitch.IsOn;
         Draft.UpdateFeedUrl = FeedUrlBox.Text?.Trim() ?? "";
         Draft.IncludeBetaUpdates = BetaUpdatesBox.IsChecked == true;
+        Draft.InsiderChannel = string.Equals(InsiderChannelBox.SelectedItem as string, "Canary", StringComparison.OrdinalIgnoreCase)
+            ? "Canary" : "Beta";
         // Draft.BetaAccessUnlocked + Patreon tokens are mutated by login/unlink, not a checkbox.
 
         Draft.DefaultTempoPercent = DefaultTempoBox.Value;

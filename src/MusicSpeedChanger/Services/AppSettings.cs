@@ -19,6 +19,8 @@ public sealed class AppSettings
     public string UpdateFeedUrl { get; set; } = DefaultFeedUrl;
     /// <summary>When true, the updater also looks at beta/pre-release builds.</summary>
     public bool IncludeBetaUpdates { get; set; } = false;
+    /// <summary>Insider Hub channel for Patreon supporters: "Beta" or "Canary" (weekly).</summary>
+    public string InsiderChannel { get; set; } = "Beta";
     /// <summary>True after a verified Patreon login (active membership).</summary>
     public bool BetaAccessUnlocked { get; set; } = false;
     /// <summary>Patreon OAuth refresh token (plaintext, like a session cookie).</summary>
@@ -136,6 +138,8 @@ public sealed class AppSettings
         RepeatMode = Math.Clamp(RepeatMode, 0, 2);
         if (string.IsNullOrWhiteSpace(UpdateFeedUrl)) UpdateFeedUrl = DefaultFeedUrl;
         if (string.IsNullOrWhiteSpace(CustomAccentHex)) CustomAccentHex = "#2E7D32";
+        if (!string.Equals(InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase))
+            InsiderChannel = "Beta";
         if (string.IsNullOrWhiteSpace(PatreonRefreshToken)) PatreonRefreshToken = null;
         if (string.IsNullOrWhiteSpace(PatreonFullName)) PatreonFullName = null;
         if (LastEqGains != null && LastEqGains.Length != Audio.GraphicEqualizer.BandCount)

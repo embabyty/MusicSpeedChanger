@@ -62,6 +62,11 @@ public sealed partial class MainWindow : Window
 
     // ----- Beta gate (Patreon login required to run beta builds) -----
     private bool _betaGateActive;
+
+    // ----- MSC Insider Hub (Beta + weekly Canary for Patreon supporters) -----
+    private UpdateInfo? _pendingInsiderBeta;
+    private UpdateInfo? _pendingInsiderCanary;
+    private bool _refreshingInsider;
     private static readonly string[] AudioExtensions =
         { ".mp3", ".wav", ".m4a", ".aac", ".wma", ".aiff", ".aif", ".flac" };
 
@@ -104,6 +109,7 @@ public sealed partial class MainWindow : Window
         RebuildEffectsPanel();
         _navIdleBackground = NavPlayerButton.Background;
         ShowView("player");
+        UpdateInsiderVisibility();
         ApplyAccent();
         _uiSettings.ColorValuesChanged += (_, _) => DispatcherQueue.TryEnqueue(() =>
         {
@@ -307,6 +313,7 @@ public sealed partial class MainWindow : Window
             ApplyLiveSettings();
             ApplyAccent();
             _settings.Save();
+            UpdateInsiderVisibility();
         }
     }
 
@@ -318,6 +325,14 @@ public sealed partial class MainWindow : Window
         {
             await Task.Delay(2500);
             if (_betaGateActive) return; // gated: user verifies (or exits) first
+            if (_settings.BetaAccessUnlocked &&
+                string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase))
+            {
+                // Canary channel: prefer the weekly build, fall back to Beta/stable.
+                var (beta, canary) = await UpdateService.GetInsiderUpdatesAsync(_settings.UpdateFeedUrl);
+                if (canary != null) { await PromptUpdateAsync(canary); return; }
+                if (beta != null) { await PromptUpdateAsync(beta); return; }
+            }
             var info = await UpdateService.CheckForUpdateAsync(_settings.UpdateFeedUrl, _settings.IncludeBetaUpdates);
             if (info == null) return;
             await PromptUpdateAsync(info);
@@ -335,7 +350,9 @@ public sealed partial class MainWindow : Window
         }
         var dlg = new ContentDialog
         {
-            Title = info.IsBeta ? $"Beta update available — {info.Version}" : $"Update available — {info.Version}",
+            Title = info.IsCanary ? $"Canary update available — {info.Version}"
+                : info.IsBeta ? $"Beta update available — {info.Version}"
+                : $"Update available — {info.Version}",
             Content = string.IsNullOrWhiteSpace(info.Notes)
                 ? $"Version {info.Version} is ready to install."
                 : $"Version {info.Version} is ready to install.\n\n{info.Notes}",
@@ -407,6 +424,7 @@ public sealed partial class MainWindow : Window
         _settings.PatreonRefreshToken = account.RefreshToken;
         _settings.PatreonFullName = account.FullName;
         _settings.Save();
+        UpdateInsiderVisibility();
     }
 
     private void ClearPatreonLink()
@@ -415,12 +433,18 @@ public sealed partial class MainWindow : Window
         _settings.PatreonRefreshToken = null;
         _settings.PatreonFullName = null;
         _settings.Save();
+        UpdateInsiderVisibility();
     }
 
     // ---------- Beta gate (startup Patreon requirement for beta builds) ----------
 
     private static bool IsBetaBuild() =>
         UpdateService.DisplayVersion.IndexOf("beta", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static bool IsCanaryBuild() =>
+        UpdateService.DisplayVersion.IndexOf("canary", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static bool IsInsiderBuild() => IsBetaBuild() || IsCanaryBuild();
 
     /// <summary>
     /// Beta builds require an active Patreon membership to run at all. Linked
@@ -469,6 +493,113 @@ public sealed partial class MainWindow : Window
 
     private void BetaGateDeclineButton_Click(object sender, RoutedEventArgs e) =>
         Application.Current.Exit();
+
+    // ---------- MSC Insider Hub (Beta + weekly Canary, Patreon supporters) ----------
+
+    /// <summary>
+    /// The Hub is a beta-build perk: visible only on Beta/Canary builds for
+    /// Patreon-linked supporters. Stable builds and unlinked users never see it.
+    /// </summary>
+    private void UpdateInsiderVisibility()
+    {
+        if (NavInsiderButton == null) return;
+        bool visible = IsInsiderBuild() && _settings.BetaAccessUnlocked;
+        NavInsiderButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (!visible && InsiderView != null && InsiderView.Visibility == Visibility.Visible)
+            ShowView("player");
+        SyncInsiderHeader();
+    }
+
+    private void SyncInsiderHeader()
+    {
+        if (InsiderPatreonLabel == null) return;
+        string who = string.IsNullOrWhiteSpace(_settings.PatreonFullName) ? "" : $" as {_settings.PatreonFullName}";
+        InsiderPatreonLabel.Text = _settings.BetaAccessUnlocked
+            ? $"Linked{who} ✓ — insider builds unlocked."
+            : "Not linked — log in with Patreon to unlock insider builds.";
+        if (InsiderCurrentLabel != null)
+            InsiderCurrentLabel.Text =
+                $"Running {UpdateService.DisplayVersion} ({UpdateService.CurrentChannel} channel, {_settings.InsiderChannel} preferred).";
+        if (InsiderBetaRadio != null)
+            InsiderBetaRadio.IsChecked = !string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase);
+        if (InsiderCanaryRadio != null)
+            InsiderCanaryRadio.IsChecked = string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void InsiderChannel_Checked(object sender, RoutedEventArgs e)
+    {
+        if (InsiderCanaryRadio == null) return;
+        _settings.InsiderChannel = InsiderCanaryRadio.IsChecked == true ? "Canary" : "Beta";
+        _settings.Save();
+        SyncInsiderHeader();
+    }
+
+    private void InsiderCheckButton_Click(object sender, RoutedEventArgs e) => RefreshInsiderHubAsync();
+
+    private void InsiderPatreonButton_Click(object sender, RoutedEventArgs e)
+    {
+        try { _ = Launcher.LaunchUriAsync(new Uri(UpdateService.PatreonPageUrl)); }
+        catch { /* ignore */ }
+    }
+
+    private async void RefreshInsiderHubAsync()
+    {
+        if (InsiderStatusLabel == null || _refreshingInsider) return;
+        if (!IsInsiderBuild() || !_settings.BetaAccessUnlocked) return;
+        _refreshingInsider = true;
+        if (InsiderCheckButton != null) InsiderCheckButton.IsEnabled = false;
+        try
+        {
+            SyncInsiderHeader();
+            InsiderStatusLabel.Text = "Checking for insider builds…";
+            var (beta, canary) = await UpdateService.GetInsiderUpdatesAsync(_settings.UpdateFeedUrl);
+            _pendingInsiderBeta = beta;
+            _pendingInsiderCanary = canary;
+            FillInsiderCard(beta, InsiderBetaStatus, InsiderBetaNotes, InsiderBetaInstallButton, "Beta");
+            FillInsiderCard(canary, InsiderCanaryStatus, InsiderCanaryNotes, InsiderCanaryInstallButton, "Canary");
+            InsiderStatusLabel.Text = beta == null && canary == null
+                ? $"No insider builds found ({UpdateService.DisplayVersion} is the newest)."
+                : "Insider builds refreshed.";
+        }
+        catch (Exception ex)
+        {
+            InsiderStatusLabel.Text = $"Check failed: {ex.Message}";
+        }
+        finally
+        {
+            _refreshingInsider = false;
+            if (InsiderCheckButton != null) InsiderCheckButton.IsEnabled = true;
+        }
+    }
+
+    private void FillInsiderCard(UpdateInfo? info, TextBlock status, TextBlock notes,
+        Button installButton, string channel)
+    {
+        if (info == null)
+        {
+            status.Text = $"No {channel} build published yet.";
+            notes.Text = "";
+            installButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+        string date = info.PublishedAt == default ? "" : $" — published {info.PublishedAt:yyyy-MM-dd}";
+        string tag = string.IsNullOrEmpty(info.Tag) ? info.Version.ToString() : info.Tag;
+        status.Text = $"{channel} {tag}{date}";
+        notes.Text = string.IsNullOrWhiteSpace(info.Notes) ? "" : info.Notes.Trim();
+        installButton.Visibility = Visibility.Visible;
+    }
+
+    private async void InsiderBetaInstallButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pendingInsiderBeta != null)
+            await DownloadAndInstallAsync(_pendingInsiderBeta);
+    }
+
+    private async void InsiderCanaryInstallButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pendingInsiderCanary != null)
+            await DownloadAndInstallAsync(_pendingInsiderCanary);
+    }
 
     private async Task DownloadAndInstallAsync(UpdateInfo info)
     {
@@ -1040,14 +1171,16 @@ public sealed partial class MainWindow : Window
         UpdateLoopUi(autoEnable: true);
     }
 
-    private void SetBButton_Click(object sender, RoutedEventArgs e)
+    private async void SetBButton_Click(object sender, RoutedEventArgs e)
     {
-        _engine.LoopB = _engine.SourcePosition;
-        if (_engine.LoopA.HasValue && _engine.LoopB <= _engine.LoopA)
+        var newB = _engine.SourcePosition;
+        if (_engine.LoopA.HasValue && newB <= _engine.LoopA.Value)
         {
-            // Swap so A < B
-            (_engine.LoopA, _engine.LoopB) = (_engine.LoopB, _engine.LoopA);
+            await ShowErrorAsync(
+                $"Loop end (B) must be after loop start (A).\n\nA = {FormatTime(_engine.LoopA.Value)} — move past A and try again.");
+            return;
         }
+        _engine.LoopB = newB;
         UpdateLoopUi(autoEnable: true);
     }
 
@@ -1096,25 +1229,35 @@ public sealed partial class MainWindow : Window
 
     private void NavPlayerButton_Click(object sender, RoutedEventArgs e) => ShowView("player");
     private void NavEqButton_Click(object sender, RoutedEventArgs e) => ShowView("eq");
+    private void NavInsiderButton_Click(object sender, RoutedEventArgs e) => ShowView("insider");
     private void NavSettingsButton_Click(object sender, RoutedEventArgs e) =>
         SettingsButton_Click(sender, e);
 
     private void ShowView(string view)
     {
         bool eq = view == "eq";
-        if (EqView == null || PlayerView == null) return;
+        bool insider = view == "insider";
+        if (EqView == null || PlayerView == null || InsiderView == null) return;
         EqView.Visibility = eq ? Visibility.Visible : Visibility.Collapsed;
-        PlayerView.Visibility = eq ? Visibility.Collapsed : Visibility.Visible;
+        InsiderView.Visibility = insider ? Visibility.Visible : Visibility.Collapsed;
+        PlayerView.Visibility = (eq || insider) ? Visibility.Collapsed : Visibility.Visible;
         if (NavPlayerButton != null)
-            NavPlayerButton.Background = !eq ? _reverseActiveBackground : _navIdleBackground;
+            NavPlayerButton.Background = (!eq && !insider) ? _reverseActiveBackground : _navIdleBackground;
         if (NavEqButton != null)
             NavEqButton.Background = eq ? _reverseActiveBackground : _navIdleBackground;
+        if (NavInsiderButton != null)
+            NavInsiderButton.Background = insider ? _reverseActiveBackground : _navIdleBackground;
+        if (insider)
+            RefreshInsiderHubAsync();
     }
 
     // ---------- Effects chain (Equalizer APO style) ----------
 
     private void AddEqButton_Click(object sender, RoutedEventArgs e)
     {
+        // One EQ per chain is plenty — the button disables once one exists,
+        // but guard here too since the chain can outlive the UI state.
+        if (_engine.SnapshotEffects().Any(b => !b.IsPreamp)) return;
         _engine.AddEffect(EffectBlock.NewEq());
         SaveFxSettings();
         RebuildEffectsPanel();
@@ -1138,6 +1281,15 @@ public sealed partial class MainWindow : Window
             EffectsEmptyLabel.Visibility = blocks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             for (int i = 0; i < blocks.Count; i++)
                 EffectsPanel.Children.Add(BuildEffectCard(blocks[i], i, blocks.Count));
+            // One EQ per chain: once an EQ exists (even from an older chain),
+            // no more can be added. Preamps stay unlimited.
+            bool hasEq = blocks.Any(b => !b.IsPreamp);
+            if (AddEqButton != null)
+            {
+                AddEqButton.IsEnabled = !hasEq;
+                ToolTipService.SetToolTip(AddEqButton,
+                    hasEq ? "Only one Graphic EQ per chain" : "Add graphic EQ");
+            }
         }
         finally { _rebuildingFx = false; }
         UpdateCurve();
@@ -1300,6 +1452,9 @@ public sealed partial class MainWindow : Window
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollMode = ScrollMode.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            // Fixed height: breaks scroll-viewport measure feedback that froze
+            // layout (value ~14px + slider 100px + freq ~12px + room to spare).
+            Height = 150,
         };
         var bandsPanel = new StackPanel { Orientation = Orientation.Horizontal };
         scroll.Content = bandsPanel;
