@@ -355,7 +355,7 @@ public sealed partial class MainWindow : Window
                 : $"Update available — {info.Version}",
             Content = string.IsNullOrWhiteSpace(info.Notes)
                 ? $"Version {info.Version} is ready to install."
-                : $"Version {info.Version} is ready to install.\n\n{info.Notes}",
+                : $"Version {info.Version} is ready to install.\n\n{UpdateService.CleanNotes(info.Notes)}",
             PrimaryButtonText = "Download & install",
             CloseButtonText = "Later",
             DefaultButton = ContentDialogButton.Primary,
@@ -388,7 +388,7 @@ public sealed partial class MainWindow : Window
             Title = $"Beta {info.Version} is for Patreon supporters",
             Content = string.IsNullOrWhiteSpace(info.Notes)
                 ? "Beta builds are gated for Patreon supporters.\nLog in to verify your membership, or wait for the stable release."
-                : $"Beta {info.Version} is gated for Patreon supporters.\n\n{info.Notes}\n\nLog in to verify your membership, or wait for the stable release.",
+                : $"Beta {info.Version} is gated for Patreon supporters.\n\n{UpdateService.CleanNotes(info.Notes)}\n\nLog in to verify your membership, or wait for the stable release.",
             PrimaryButtonText = "Login with Patreon",
             SecondaryButtonText = "Open Patreon page",
             CloseButtonText = "Later",
@@ -585,7 +585,7 @@ public sealed partial class MainWindow : Window
         string date = info.PublishedAt == default ? "" : $" — published {info.PublishedAt:yyyy-MM-dd}";
         string tag = string.IsNullOrEmpty(info.Tag) ? info.Version.ToString() : info.Tag;
         status.Text = $"{channel} {tag}{date}";
-        notes.Text = string.IsNullOrWhiteSpace(info.Notes) ? "" : info.Notes.Trim();
+        notes.Text = UpdateService.CleanNotes(info?.Notes);
         installButton.Visibility = Visibility.Visible;
     }
 
