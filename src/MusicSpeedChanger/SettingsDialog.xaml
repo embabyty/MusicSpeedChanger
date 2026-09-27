@@ -42,6 +42,17 @@
             <TextBlock x:Name="BetaStatusLabel" TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
+            <!-- Canary channel (Patreon-gated weekly builds, installs side-by-side) -->
+            <TextBlock Text="Canary channel" Style="{StaticResource SectionHeader}" />
+            <TextBlock Text="Weekly early builds for Patreon supporters. Switching verifies your membership, then installs the canary next to this app."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                <Button x:Name="SwitchToCanaryButton" Content="Switch to Canary" Click="SwitchToCanaryButton_Click"
+                        Style="{ThemeResource AccentButtonStyle}" />
+            </StackPanel>
+            <TextBlock x:Name="CanaryStatusLabel" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
             <!-- Speed & pitch -->
             <TextBlock Text="Speed &amp; pitch" Style="{StaticResource SectionHeader}" />
             <NumberBox x:Name="DefaultTempoBox" Header="Default tempo (%)"

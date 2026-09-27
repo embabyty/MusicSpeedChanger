@@ -117,59 +117,67 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private bool _switching;
 
+    /// <summary>Verifies Patreon membership (stored login first, browser login otherwise).</summary>
+    /// <returns>True when the supporter gate is unlocked.</returns>
+    private async Task<bool> EnsurePatreonAsync(Action<string> report)
+    {
+        // A stored login re-verifies silently — no browser needed.
+        if (!Draft.BetaAccessUnlocked && !string.IsNullOrEmpty(Draft.PatreonRefreshToken))
+        {
+            report("Re-verifying Patreon membership…");
+            var silent = await PatreonAuthService.RefreshAndVerifyAsync(Draft.PatreonRefreshToken);
+            if (silent != null)
+            {
+                Draft.BetaAccessUnlocked = true;
+                Draft.PatreonRefreshToken = silent.RefreshToken;
+                Draft.PatreonFullName = silent.FullName;
+            }
+            else
+            {
+                Draft.BetaAccessUnlocked = false;
+                Draft.PatreonRefreshToken = null;
+                Draft.PatreonFullName = null;
+            }
+        }
+        if (!Draft.BetaAccessUnlocked)
+        {
+            var progress = new Progress<string>(s => report(s));
+            var (account, error) = await PatreonAuthService.LoginAsync(progress);
+            if (account == null)
+            {
+                report(error ?? "Login didn't complete.");
+                return false;
+            }
+            Draft.BetaAccessUnlocked = true;
+            Draft.PatreonRefreshToken = account.RefreshToken;
+            Draft.PatreonFullName = account.FullName;
+        }
+        return true;
+    }
+
     /// <summary>
-    /// Patreon-gated switch to beta: verifies membership (stored login first,
-    /// browser login otherwise), then offers the newest beta installer, which
-    /// lives side-by-side with this stable app.
+    /// Patreon-gated switch to beta: verifies membership, then offers the newest
+    /// Beta installer, which lives side-by-side with this stable app.
     /// </summary>
     private async void SwitchToBetaButton_Click(object sender, RoutedEventArgs e)
     {
         if (_switching) return;
         _switching = true;
         SwitchToBetaButton.IsEnabled = false;
+        SwitchToCanaryButton.IsEnabled = false;
         InstallUpdateButton.Visibility = Visibility.Collapsed;
         try
         {
-            // A stored login re-verifies silently — no browser needed.
-            if (!Draft.BetaAccessUnlocked && !string.IsNullOrEmpty(Draft.PatreonRefreshToken))
-            {
-                BetaStatusLabel.Text = "Re-verifying Patreon membership…";
-                var silent = await PatreonAuthService.RefreshAndVerifyAsync(Draft.PatreonRefreshToken);
-                if (silent != null)
-                {
-                    Draft.BetaAccessUnlocked = true;
-                    Draft.PatreonRefreshToken = silent.RefreshToken;
-                    Draft.PatreonFullName = silent.FullName;
-                }
-                else
-                {
-                    Draft.BetaAccessUnlocked = false;
-                    Draft.PatreonRefreshToken = null;
-                    Draft.PatreonFullName = null;
-                }
-            }
-            if (!Draft.BetaAccessUnlocked)
-            {
-                var progress = new Progress<string>(s => BetaStatusLabel.Text = s);
-                var (account, error) = await PatreonAuthService.LoginAsync(progress);
-                if (account == null)
-                {
-                    BetaStatusLabel.Text = error ?? "Login didn't complete.";
-                    return;
-                }
-                Draft.BetaAccessUnlocked = true;
-                Draft.PatreonRefreshToken = account.RefreshToken;
-                Draft.PatreonFullName = account.FullName;
-            }
+            if (!await EnsurePatreonAsync(s => BetaStatusLabel.Text = s)) return;
             BetaStatusLabel.Text = "Checking for beta builds…";
-            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "", includeBeta: true);
-            if (info == null || !info.IsBeta)
+            var (beta, _) = await UpdateService.GetInsiderUpdatesAsync(FeedUrlBox.Text?.Trim() ?? "");
+            if (beta == null)
             {
                 BetaStatusLabel.Text = "No beta build available right now — you're up to date.";
                 return;
             }
-            _pendingUpdate = info;
-            BetaStatusLabel.Text = $"Beta {info.Version} is available.\n{info.Notes}";
+            _pendingUpdate = beta;
+            BetaStatusLabel.Text = $"Beta {beta.Version} is available.\n{beta.Notes}";
             InstallUpdateButton.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
@@ -180,6 +188,44 @@ public sealed partial class SettingsDialog : ContentDialog
         {
             _switching = false;
             SwitchToBetaButton.IsEnabled = true;
+            SwitchToCanaryButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Patreon-gated switch to canary: verifies membership, then offers the newest
+    /// weekly Canary installer, which lives side-by-side with this stable app.
+    /// </summary>
+    private async void SwitchToCanaryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_switching) return;
+        _switching = true;
+        SwitchToBetaButton.IsEnabled = false;
+        SwitchToCanaryButton.IsEnabled = false;
+        InstallUpdateButton.Visibility = Visibility.Collapsed;
+        try
+        {
+            if (!await EnsurePatreonAsync(s => CanaryStatusLabel.Text = s)) return;
+            CanaryStatusLabel.Text = "Checking for canary builds…";
+            var (_, canary) = await UpdateService.GetInsiderUpdatesAsync(FeedUrlBox.Text?.Trim() ?? "");
+            if (canary == null)
+            {
+                CanaryStatusLabel.Text = "No canary build available right now — you're up to date.";
+                return;
+            }
+            _pendingUpdate = canary;
+            CanaryStatusLabel.Text = $"Canary {canary.Version} is available.\n{canary.Notes}";
+            InstallUpdateButton.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            CanaryStatusLabel.Text = $"Canary switch failed: {ex.Message}";
+        }
+        finally
+        {
+            _switching = false;
+            SwitchToBetaButton.IsEnabled = true;
+            SwitchToCanaryButton.IsEnabled = true;
         }
     }
 
