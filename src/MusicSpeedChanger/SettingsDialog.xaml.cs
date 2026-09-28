@@ -199,8 +199,8 @@ public sealed partial class SettingsDialog : ContentDialog
             {
                 _pendingUpdate = info;
                 UpdateStatusLabel.Text = info.IsBeta
-                    ? $"Beta {info.Version} is available.\n{info.Notes}"
-                    : $"Version {info.Version} is available.\n{info.Notes}";
+                    ? $"Beta {info.Version} is available.\n{UpdateService.CleanNotes(info.Notes)}"
+                    : $"Version {info.Version} is available.\n{UpdateService.CleanNotes(info.Notes)}";
                 InstallUpdateButton.Visibility = Visibility.Visible;
             }
         }
@@ -271,7 +271,7 @@ public sealed partial class SettingsDialog : ContentDialog
                 return;
             }
             _pendingUpdate = info;
-            BetaStatusLabel.Text = $"Beta {info.Version} is available.\n{info.Notes}";
+            BetaStatusLabel.Text = $"Beta {info.Version} is available.\n{UpdateService.CleanNotes(info.Notes)}";
             InstallUpdateButton.Visibility = Visibility.Visible;
         }
         catch (Exception ex)

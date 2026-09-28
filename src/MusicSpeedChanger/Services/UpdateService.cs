@@ -3,7 +3,9 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -158,6 +160,38 @@ public static class UpdateService
             }
         }
         return (bestBeta, bestCanary);
+    }
+
+    /// <summary>
+    /// Release notes are authored in Markdown, but WinUI dialogs and labels show
+    /// plain text. Strips headings, emphasis, quotes, callouts, links and inline
+    /// code so notes read cleanly in the app.
+    /// </summary>
+    public static string CleanNotes(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes)) return "";
+        var sb = new StringBuilder();
+        foreach (var raw in notes.Replace("\r\n", "\n").Split('\n'))
+        {
+            string line = raw.TrimEnd().TrimStart();
+            // GitHub callouts ("> [!NOTE]") and quotes ("> text").
+            if (line.StartsWith(">"))
+            {
+                line = line.TrimStart('>', ' ');
+                var callout = Regex.Match(line, @"^\[!(\w+)\]\s*");
+                if (callout.Success)
+                    line = callout.Groups[1].Value + ": " + line[callout.Length..].TrimStart();
+            }
+            // Headings ("## Title" → "Title").
+            line = Regex.Replace(line, @"^#{1,6}\s*", "");
+            // Bold/italic markers.
+            line = line.Replace("**", "").Replace("__", "");
+            // Links ([text](url) → text) and inline code (`x` → x).
+            line = Regex.Replace(line, @"\[([^\]]*)\]\([^)]*\)", "$1");
+            line = line.Replace("`", "");
+            sb.AppendLine(line.TrimEnd());
+        }
+        return Regex.Replace(sb.ToString().Replace("\r\n", "\n"), @"\n{3,}", "\n\n").Trim();
     }
 
     public static async Task DownloadAsync(
