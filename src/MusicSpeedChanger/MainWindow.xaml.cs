@@ -26,7 +26,7 @@ namespace MusicSpeedChanger;
 
 public sealed partial class MainWindow : Window
 {
-    private readonly AudioEngine _engine = new();
+    private AudioEngine _engine = new();
     private readonly DispatcherTimer _timer;
     private readonly Brush _reverseActiveBackground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x6A, 0x3F, 0xB5));
     private Brush? _reverseIdleBackground;
@@ -55,6 +55,18 @@ public sealed partial class MainWindow : Window
     private const int RepeatOff = 0, RepeatAll = 1, RepeatOne = 2;
     private readonly Random _rng = new();
     private Brush? _shuffleIdleBackground;
+
+    // ----- AutoMix (Beta, Canary builds only) -----
+    // Dual-engine tempo-matched crossfade: the outgoing track keeps playing on
+    // _engine while the incoming track fades in on _mixNext. Beat-grid snapping
+    // (BPM detection + downbeat alignment) is deferred to a later Beta — tempo
+    // is matched by construction because both engines share the global slider.
+    private AudioEngine? _mixNext;
+    private int _mixNextIndex = -1;
+    private bool _mixStarting;
+    private double _mixElapsed;
+    private double _mixDuration = 5;
+    private Brush? _autoMixIdleBackground;
 
     // ----- Windows media controls (Action Center / flyout / lock screen) -----
     private readonly SmtcService _smtc = new();
@@ -89,6 +101,7 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         _reverseIdleBackground = ReverseButton.Background;
         _shuffleIdleBackground = ShuffleButton.Background;
+        _autoMixIdleBackground = ShuffleButton.Background;
 
         // Mica backdrop: visible in the transparent title-bar strip (content keeps
         // its dark background below). Falls back to a solid color off Windows 11.
@@ -136,10 +149,7 @@ public sealed partial class MainWindow : Window
         _shuffle = _settings.ShuffleEnabled;
         _repeatMode = Math.Clamp(_settings.RepeatMode, RepeatOff, RepeatOne);
 
-        _engine.PlaybackEnded += (_, _) => DispatcherQueue.TryEnqueue(async () =>
-        {
-            await OnTrackEndedAsync();
-        });
+        _engine.PlaybackEnded += OnEnginePlaybackEnded;
 
         Closed += (_, _) =>
         {
@@ -149,10 +159,12 @@ public sealed partial class MainWindow : Window
             _settings.RepeatMode = _repeatMode;
             _settings.Save();
             _smtc.Dispose();
+            try { _mixNext?.Dispose(); } catch { /* ignore */ }
             _engine.Dispose();
         };
         UpdateTransportState();
         UpdateShuffleRepeatUi();
+        UpdateAutoMixUi();
         UpdateNextUp();
         InitSmtc();
         MaybeShowBetaGateAsync();
@@ -318,11 +330,16 @@ public sealed partial class MainWindow : Window
         };
         if (await dlg.ShowAsync() == ContentDialogResult.Primary)
         {
+            bool autoMixWasOn = IsAutoMixOn();
             _settings.CopyFrom(dlg.Draft);
             ApplyLiveSettings();
             ApplyAccent();
             _settings.Save();
+            if (!IsAutoMixOn() && autoMixWasOn)
+                CancelAutoMix();
             UpdateInsiderVisibility();
+            UpdateAutoMixUi();
+            UpdateNextUp();
         }
     }
 
@@ -693,6 +710,7 @@ public sealed partial class MainWindow : Window
     private async void FileListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_playlistSync) return;
+        CancelAutoMix();
         if (FileListView.SelectedItem is not TrackItem item) return;
         await LoadTrackAsync(item, _playlistAutoPlay);
         UpdateNextUp();
@@ -714,6 +732,7 @@ public sealed partial class MainWindow : Window
 
     private void RemoveSelected()
     {
+        CancelAutoMix();
         if (FileListView.SelectedItem is TrackItem item)
             _tracks.Remove(item);
         UpdatePlaylistUi();
@@ -721,6 +740,7 @@ public sealed partial class MainWindow : Window
 
     private void ClearFilesButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelAutoMix();
         if (_tracks.Count == 0) return;
         _playlistSync = true;
         try
@@ -755,11 +775,15 @@ public sealed partial class MainWindow : Window
         catch { /* drop is best-effort */ }
     }
 
-    private async void PrevButton_Click(object sender, RoutedEventArgs e) =>
+    private async void PrevButton_Click(object sender, RoutedEventArgs e)
+    {
+        CancelAutoMix();
         await MoveSelection(-1, wrap: _repeatMode == RepeatAll);
+    }
 
     private async void NextButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelAutoMix();
         if (_tracks.Count == 0) return;
         int current = FileListView.SelectedIndex;
         int next = PickNextIndex(current, wrap: _repeatMode == RepeatAll);
@@ -772,6 +796,7 @@ public sealed partial class MainWindow : Window
 
     private async Task MoveSelection(int delta, bool wrap = false)
     {
+        CancelAutoMix();
         if (_tracks.Count == 0) return;
         int i = FileListView.SelectedIndex;
         if (i < 0)
@@ -794,6 +819,8 @@ public sealed partial class MainWindow : Window
         NextButton.IsEnabled = any;
         ShuffleButton.IsEnabled = any;
         RepeatButton.IsEnabled = true; // Repeat One works even on a single loaded file
+        if (AutoMixButton != null)
+            AutoMixButton.IsEnabled = _tracks.Count > 1;
         _smtc.SetNextPreviousEnabled(CanGoNext(), CanGoPrevious());
         UpdateNextUp();
     }
@@ -806,6 +833,7 @@ public sealed partial class MainWindow : Window
         _settings.ShuffleEnabled = _shuffle;
         _settings.Save();
         UpdateShuffleRepeatUi();
+        UpdateAutoMixUi();
         UpdateNextUp();
     }
 
@@ -814,7 +842,10 @@ public sealed partial class MainWindow : Window
         _repeatMode = (_repeatMode + 1) % 3;
         _settings.RepeatMode = _repeatMode;
         _settings.Save();
+        if (_repeatMode == RepeatOne)
+            CancelAutoMix();
         UpdateShuffleRepeatUi();
+        UpdateAutoMixUi();
         UpdateNextUp();
     }
 
@@ -849,8 +880,17 @@ public sealed partial class MainWindow : Window
         return wrap ? 0 : -1;
     }
 
+    private void OnEnginePlaybackEnded(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(async () => await OnTrackEndedAsync());
+
     private async Task OnTrackEndedAsync()
     {
+        // AutoMix crossfade in progress: the outgoing engine ended — finish the swap.
+        if (_mixNext != null)
+        {
+            await FinishAutoMixAsync();
+            return;
+        }
         // Repeat One: restart the same track.
         if (_repeatMode == RepeatOne && _engine.IsLoaded)
         {
@@ -876,9 +916,258 @@ public sealed partial class MainWindow : Window
             FileListView.SelectedIndex = next; // SelectionChanged auto-plays
     }
 
+    // ---------- AutoMix (Beta, Canary builds only) ----------
+
+    /// <summary>AutoMix is a Canary-only Beta: hidden on Stable/Beta builds.</summary>
+    private bool IsAutoMixAvailable() => IsCanaryBuild();
+
+    private bool IsAutoMixOn() =>
+        IsAutoMixAvailable() && _settings.AutoMixEnabled;
+
+    private double AutoMixRequestedSeconds() =>
+        Math.Clamp(_settings.AutoMixSeconds, 1, 12);
+
+    /// <summary>Whether a crossfade may start right now (eligible state).</summary>
+    private bool CanAutoMixNow()
+    {
+        if (!IsAutoMixOn()) return false;
+        if (_mixNext != null || _mixStarting) return false;
+        if (!_engine.IsLoaded || !_engine.IsPlaying || _engine.Reverse) return false;
+        if (_engine.LoopEnabled) return false;
+        if (_repeatMode == RepeatOne) return false;
+        if (_tracks.Count < 2) return false;
+        int current;
+        try { current = FileListView.SelectedIndex; } catch { return false; }
+        int next = PickNextIndex(current, wrap: _repeatMode == RepeatAll);
+        if (next < 0 || next >= _tracks.Count) return false;
+        if (!File.Exists(_tracks[next].Path)) return false;
+        double remaining = _engine.EffectiveRemainingSeconds;
+        if (remaining <= 0.15 || remaining > AutoMixRequestedSeconds()) return false;
+        // Outgoing track must be longer than a blip, incoming must exist.
+        if (_engine.SourceDuration.TotalSeconds < 3) return false;
+        return true;
+    }
+
+    private void MaybeStartAutoMix()
+    {
+        if (!CanAutoMixNow()) return;
+        int current;
+        try { current = FileListView.SelectedIndex; } catch { return; }
+        int next = PickNextIndex(current, wrap: _repeatMode == RepeatAll);
+        if (next < 0) return;
+        _ = StartAutoMixAsync(next);
+    }
+
+    /// <summary>
+    /// Starts the tempo-matched crossfade: preloads the next track on a second
+    /// engine (same tempo/pitch/EQ/volume) and fades it in while fading the
+    /// current track out with an equal-power curve.
+    /// </summary>
+    private async Task StartAutoMixAsync(int nextIndex)
+    {
+        if (_mixNext != null || _mixStarting) return;
+        if (nextIndex < 0 || nextIndex >= _tracks.Count) return;
+        var item = _tracks[nextIndex];
+        if (!File.Exists(item.Path)) return;
+        _mixStarting = true;
+        try
+        {
+            double tempo = Math.Clamp(TempoSlider.Value / 100.0, 0.25, 3.0);            double pitch = Math.Clamp(PitchSlider.Value, -12.0, 12.0);
+            float volume = (float)Math.Clamp(VolumeSlider.Value / 100.0, 0, 1);
+            var fx = _engine.SnapshotEffects();
+            var incoming = new AudioEngine();
+            bool loaded = await Task.Run(() =>
+            {
+                try
+                {
+                    incoming.ReplaceEffects(fx);
+                    incoming.Load(item.Path);
+                    incoming.Tempo = tempo;
+                    incoming.PitchSemitones = pitch;
+                    incoming.Volume = volume;
+                    incoming.MixGain = 0f;
+                    return true;
+                }
+                catch { return false; }
+            });
+            if (!loaded || !_engine.IsPlaying)
+            {
+                try { incoming.Dispose(); } catch { /* ignore */ }
+                return;
+            }
+            // Effective length: never longer than the time left on the outgoing
+            // track (wall-clock), so short endings still resolve cleanly.
+            double remaining = _engine.EffectiveRemainingSeconds;
+            _mixDuration = Math.Clamp(Math.Min(AutoMixRequestedSeconds(), Math.Max(0.8, remaining)), 0.8, 12);
+            _mixElapsed = 0;
+            _mixNextIndex = nextIndex;
+            incoming.PlaybackEnded += OnEnginePlaybackEnded;
+            incoming.Play();
+            _mixNext = incoming;
+            StatusLabel.Text = $"AutoMix (Beta) → {item.Name}";
+            UpdateNextUp();
+        }
+        catch { /* crossfade start is best-effort */ }
+        finally { _mixStarting = false; }
+    }
+
+    /// <summary>Ramps both engines along an equal-power curve; called each 100 ms tick.</summary>
+    private void UpdateAutoMixFade()
+    {
+        var incoming = _mixNext;
+        if (incoming == null) return;
+        _mixElapsed += 0.1;
+        double t = Math.Clamp(_mixElapsed / Math.Max(0.4, _mixDuration), 0, 1);
+        // Equal-power crossfade (constant loudness through the middle).
+        float outGain = (float)Math.Cos(t * Math.PI / 2.0);
+        float inGain = (float)Math.Sin(t * Math.PI / 2.0);
+        try
+        {
+            _engine.MixGain = outGain;
+            incoming.MixGain = inGain;
+            incoming.Update();
+        }
+        catch { /* gains are best-effort */ }
+        if (t >= 1 || _engine.EffectiveRemainingSeconds <= 0.05)
+            _ = FinishAutoMixAsync();
+    }
+
+    /// <summary>
+    /// Promotes the incoming engine to primary and disposes the outgoing one,
+    /// then moves the queue selection + waveform + SMTC to the new track.
+    /// </summary>
+    private async Task FinishAutoMixAsync()
+    {
+        var incoming = _mixNext;
+        if (incoming == null) return;
+        _mixNext = null;
+        int finishedIndex = _mixNextIndex;
+        _mixNextIndex = -1;
+        AudioEngine old = _engine;
+        try { old.PlaybackEnded -= OnEnginePlaybackEnded; } catch { /* ignore */ }
+        _engine = incoming;
+        try { _engine.PlaybackEnded -= OnEnginePlaybackEnded; } catch { /* ignore */ }
+        _engine.PlaybackEnded += OnEnginePlaybackEnded;
+        _engine.MixGain = 1f;
+        try { old.Stop(); } catch { /* ignore */ }
+        try { old.Dispose(); } catch { /* ignore */ }
+
+        // Move the queue selection without re-loading (engine already playing).
+        _playlistSync = true;
+        try
+        {
+            if (finishedIndex >= 0 && finishedIndex < _tracks.Count)
+                FileListView.SelectedIndex = finishedIndex;
+        }
+        finally { _playlistSync = false; }
+
+        var item = (finishedIndex >= 0 && finishedIndex < _tracks.Count) ? _tracks[finishedIndex] : null;
+        _settings.LastFilePath = item?.Path ?? _engine.FilePath;
+        FileLabel.Text = _engine.FileName ?? item?.Name ?? "Unknown";
+        StatusLabel.Text = "";
+        ClearLoopUi();
+        UpdateTransportState();
+        RefreshPosition();
+        UpdateEffectiveLabel();
+        UpdateReverseUi();
+        UpdatePlaylistUi();
+        UpdateNextUp();
+        await RefreshSmtcForTrackAsync();
+        RefreshSmtcPlayback();
+
+        // Waveform for the new track (best-effort, ignore if user moved on).
+        try
+        {
+            string? path = _engine.FilePath;
+            Waveform.Data = null;
+            if (!string.IsNullOrEmpty(path))
+            {
+                string copy = path;
+                var data = await Task.Run(() => WaveformData.FromFile(copy, _settings.WaveformPeaks));
+                if (_engine.FilePath == copy)
+                    Waveform.Data = data;
+            }
+        }
+        catch { /* waveform is optional */ }
+    }
+
+    /// <summary>Aborts an in-progress crossfade (user seek/pause/nav/loop/reverse).</summary>
+    private void CancelAutoMix()
+    {
+        var incoming = _mixNext;
+        _mixNext = null;
+        _mixNextIndex = -1;
+        _mixElapsed = 0;
+        if (incoming != null)
+        {
+            try { incoming.PlaybackEnded -= OnEnginePlaybackEnded; } catch { /* ignore */ }
+            try { incoming.Stop(); } catch { /* ignore */ }
+            try { incoming.Dispose(); } catch { /* ignore */ }
+        }
+        try { _engine.MixGain = 1f; } catch { /* ignore */ }
+    }
+
+    private void AutoMixButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IsAutoMixAvailable()) return;
+        _settings.AutoMixEnabled = !_settings.AutoMixEnabled;
+        _settings.Save();
+        if (!_settings.AutoMixEnabled)
+            CancelAutoMix();
+        UpdateAutoMixUi();
+        UpdateNextUp();
+    }
+
+    private void AutoMixSeconds_Changed(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (!IsAutoMixAvailable()) return;
+        _settings.AutoMixSeconds = Math.Clamp(e.NewValue, 1, 12);
+        _settings.Save();
+        UpdateAutoMixUi();
+        UpdateNextUp();
+    }
+
+    private void UpdateAutoMixUi()
+    {
+        bool available = IsAutoMixAvailable();
+        if (AutoMixButton != null)
+        {
+            AutoMixButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+            AutoMixButton.Background = IsAutoMixOn() ? _reverseActiveBackground : _autoMixIdleBackground;
+            ToolTipService.SetToolTip(AutoMixButton, IsAutoMixOn()
+                ? $"AutoMix (Beta) on — tempo-matched crossfade over {AutoMixRequestedSeconds():0.#}s (click to turn off)"
+                : "AutoMix (Beta) off — DJ-style tempo-matched crossfade (Canary only, click to turn on)");
+        }
+        if (AutoMixIcon != null)
+            AutoMixIcon.Foreground = IsAutoMixOn()
+                ? new SolidColorBrush(Colors.White)
+                : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x77, 0x77, 0x8A));
+        if (AutoMixDurationSlider != null)
+        {
+            AutoMixDurationSlider.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+            if (Math.Abs(AutoMixDurationSlider.Value - AutoMixRequestedSeconds()) > 0.05)
+                AutoMixDurationSlider.Value = AutoMixRequestedSeconds();
+            AutoMixDurationSlider.IsEnabled = IsAutoMixOn();
+        }
+        if (AutoMixDurationPanel != null)
+            AutoMixDurationPanel.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+        if (AutoMixDurationLabel != null)
+        {
+            AutoMixDurationLabel.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+            AutoMixDurationLabel.Text = $"{AutoMixRequestedSeconds():0.#}s Beta";
+        }
+        if (AutoMixBetaBadge != null)
+            AutoMixBetaBadge.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void UpdateNextUp()
     {
         if (NextUpLabel == null) return;
+        if (_mixNext != null && _mixNextIndex >= 0 && _mixNextIndex < _tracks.Count)
+        {
+            NextUpLabel.Text = $"🎧 AutoMix (Beta) → {_tracks[_mixNextIndex].Name}";
+            return;
+        }
         if (_tracks.Count == 0) { NextUpLabel.Text = ""; return; }
         int current = FileListView.SelectedIndex;
         if (_repeatMode == RepeatOne && current >= 0 && current < _tracks.Count)
@@ -895,9 +1184,13 @@ public sealed partial class MainWindow : Window
         }
         int next = current + 1;
         if (next < _tracks.Count)
-            NextUpLabel.Text = $"Playing Next: {_tracks[next].Name}";
+            NextUpLabel.Text = IsAutoMixOn() && _engine.IsLoaded && _repeatMode != RepeatOne
+                ? $"🎧 AutoMix in {AutoMixRequestedSeconds():0.#}s → {_tracks[next].Name}"
+                : $"Playing Next: {_tracks[next].Name}";
         else if (_repeatMode == RepeatAll)
-            NextUpLabel.Text = $"Playing Next: {_tracks[0].Name} (repeat all)";
+            NextUpLabel.Text = IsAutoMixOn() && _engine.IsLoaded
+                ? $"🎧 AutoMix in {AutoMixRequestedSeconds():0.#}s → {_tracks[0].Name} (repeat all)"
+                : $"Playing Next: {_tracks[0].Name} (repeat all)";
         else
             NextUpLabel.Text = current >= 0 ? "End of files" : "";
     }
@@ -969,6 +1262,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            CancelAutoMix();
             StatusLabel.Text = "Loading…";
             await Task.Run(() => _engine.Load(path));
 
@@ -1014,6 +1308,7 @@ public sealed partial class MainWindow : Window
         if (!_engine.IsLoaded) return;
         if (_engine.IsPlaying)
         {
+            CancelAutoMix();
             _engine.Pause();
             SetPlayIcon(playing: false);
         }
@@ -1027,6 +1322,7 @@ public sealed partial class MainWindow : Window
 
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelAutoMix();
         _engine.Stop();
         SetPlayIcon(playing: false);
         RefreshPosition();
@@ -1043,6 +1339,7 @@ public sealed partial class MainWindow : Window
     private async void ReverseButton_Click(object sender, RoutedEventArgs e)
     {
         if (!_engine.IsLoaded) return;
+        CancelAutoMix();
         ReverseButton.IsEnabled = false;
         try
         {
@@ -1073,14 +1370,22 @@ public sealed partial class MainWindow : Window
             ReverseStateLabel.Text = on ? "On" : "Off";
     }
 
-    private void VolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) =>
+    private void VolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
         _engine.Volume = (float)(e.NewValue / 100.0);
+        var incoming = _mixNext;
+        if (incoming != null)
+        {
+            try { incoming.Volume = (float)(e.NewValue / 100.0); } catch { /* ignore */ }
+        }
+    }
 
     // ---------- Seek ----------
 
     private void SeekSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_updatingSeek || !_engine.IsLoaded) return;
+        CancelAutoMix();
         if (_seekDragging)
             _engine.Progress = e.NewValue / 1000.0;
         else if (e.NewValue != SeekSlider.Value)
@@ -1093,6 +1398,7 @@ public sealed partial class MainWindow : Window
     private void Waveform_SeekRequested(object? sender, double progress)
     {
         if (!_engine.IsLoaded) return;
+        CancelAutoMix();
         _engine.Progress = progress;
         RefreshPosition();
         RefreshSmtcTimeline(force: true);
@@ -1111,6 +1417,12 @@ public sealed partial class MainWindow : Window
     {
         if (!_engine.IsLoaded) return;
         _engine.Update();
+
+        // AutoMix (Beta, Canary only): start the crossfade on schedule, then ramp it.
+        if (_mixNext != null)
+            UpdateAutoMixFade();
+        else
+            MaybeStartAutoMix();
 
         var pos = _engine.SourcePosition;
         var dur = _engine.SourceDuration;
@@ -1136,6 +1448,11 @@ public sealed partial class MainWindow : Window
         if (TempoLabel == null) return;
         TempoLabel.Text = $"{e.NewValue:0}%";
         _engine.Tempo = e.NewValue / 100.0;
+        var incoming = _mixNext;
+        if (incoming != null)
+        {
+            try { incoming.Tempo = e.NewValue / 100.0; } catch { /* ignore */ }
+        }
         UpdateEffectiveLabel();
         RefreshSmtcTimeline(force: true);
     }
@@ -1153,6 +1470,11 @@ public sealed partial class MainWindow : Window
         if (PitchLabel == null) return;
         PitchLabel.Text = $"{(e.NewValue >= 0 ? "+" : "")}{e.NewValue:0.0} st";
         _engine.PitchSemitones = e.NewValue;
+        var incoming = _mixNext;
+        if (incoming != null)
+        {
+            try { incoming.PitchSemitones = e.NewValue; } catch { /* ignore */ }
+        }
     }
 
     private void PitchPreset_Click(object sender, RoutedEventArgs e)
@@ -1198,6 +1520,9 @@ public sealed partial class MainWindow : Window
     private void LoopCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         _engine.LoopEnabled = LoopCheckBox.IsChecked == true;
+        if (_engine.LoopEnabled)
+            CancelAutoMix();
+        UpdateNextUp();
     }
 
     private void UpdateLoopUi(bool autoEnable = false)
@@ -1813,7 +2138,10 @@ public sealed partial class MainWindow : Window
                 _repeatMode = mode;
                 _settings.RepeatMode = mode;
                 _settings.Save();
+                if (mode == RepeatOne)
+                    CancelAutoMix();
                 UpdateShuffleRepeatUi();
+                UpdateAutoMixUi();
                 UpdateNextUp();
             });
             _smtc.UpdateShuffleRepeat(_shuffle, _repeatMode);
@@ -1824,6 +2152,7 @@ public sealed partial class MainWindow : Window
 
     private async Task SmtcNextAsync()
     {
+        CancelAutoMix();
         if (_tracks.Count == 0) return;
         int current = FileListView.SelectedIndex;
         int next = PickNextIndex(current, wrap: _repeatMode == RepeatAll);

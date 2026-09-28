@@ -23,6 +23,8 @@ public sealed class AudioEngine : IDisposable
     private SoundTouchSampleProvider? _processor;
     private EffectsChainProvider? _chain;
     private ISampleProvider? _volumeProvider;
+    private VolumeSampleProvider? _mixGainProvider;
+    private float _mixGain = 1f;
     private bool _disposed;
 
     /// <summary>When true, playback runs backwards from the current position.</summary>
@@ -42,6 +44,23 @@ public sealed class AudioEngine : IDisposable
     {
         get => _output?.Volume ?? 1f;
         set { if (_output != null) _output.Volume = Math.Clamp(value, 0f, 1f); }
+    }
+
+    /// <summary>
+    /// Per-engine crossfade gain (0…1) applied inside the DSP chain, independent of
+    /// the user <see cref="Volume"/> (device volume). AutoMix ramps this on the
+    /// outgoing (1→0) and incoming (0→1) engines for an equal-power crossfade.
+    /// Defaults to 1; preserved across <see cref="BuildOutputChain"/> rebuilds.
+    /// </summary>
+    public float MixGain
+    {
+        get => _mixGain;
+        set
+        {
+            _mixGain = Math.Clamp(value, 0f, 1f);
+            if (_mixGainProvider != null)
+                _mixGainProvider.Volume = _mixGain;
+        }
     }
 
     public double Tempo
@@ -269,6 +288,19 @@ public sealed class AudioEngine : IDisposable
     public TimeSpan OutputDuration =>
         Tempo <= 0 ? SourceDuration : TimeSpan.FromTicks((long)(SourceDuration.Ticks / Tempo));
 
+    /// <summary>
+    /// Wall-clock seconds until the source ends at the current tempo.
+    /// AutoMix uses this (not source time) to start the crossfade on schedule.
+    /// </summary>
+    public double EffectiveRemainingSeconds
+    {
+        get
+        {
+            double tempo = Tempo <= 0 ? 1.0 : Tempo;
+            return Math.Max(0, (SourceDuration - SourcePosition).TotalSeconds / tempo);
+        }
+    }
+
     /// <summary>Current source position.</summary>
     public TimeSpan SourcePosition
     {
@@ -361,7 +393,8 @@ public sealed class AudioEngine : IDisposable
         _chain.Rebuild(SnapshotEffects());
         // Limiter sits post-effects so stretch overshoot + EQ boosts never clip the DAC.
         var limiter = new LimiterSampleProvider(_chain!);
-        _volumeProvider = new VolumeSampleProvider(limiter) { Volume = 1f };
+        _mixGainProvider = new VolumeSampleProvider(limiter) { Volume = _mixGain };
+        _volumeProvider = _mixGainProvider;
 
         _output = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 3 };
         try { _output.Volume = deviceVolume; } catch { /* ignore */ }
@@ -442,6 +475,7 @@ public sealed class AudioEngine : IDisposable
         }
         _processor = null;
         _volumeProvider = null;
+        _mixGainProvider = null;
         _chain = null;
         _sampleSource = null;
         _reverse = null;

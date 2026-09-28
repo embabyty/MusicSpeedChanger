@@ -542,6 +542,33 @@
                                 </ToolTipService.ToolTip>
                                 <FontIcon x:Name="RepeatIcon" Glyph="&#xE8EE;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#77778A" />
                             </Button>
+                            <!-- AutoMix (Beta, Canary builds only): DJ-style tempo-matched crossfade.
+                                 Visibility is managed in code (collapsed unless running Canary). -->
+                            <Button x:Name="AutoMixButton" Click="AutoMixButton_Click" IsEnabled="False"
+                                    Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent"
+                                    Visibility="Collapsed">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="AutoMix (Beta): tempo-matched crossfade into the next track (Canary only)" />
+                                </ToolTipService.ToolTip>
+                                <StackPanel Spacing="0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FontIcon x:Name="AutoMixIcon" Glyph="&#xE8AB;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#77778A"
+                                              HorizontalAlignment="Center" />
+                                    <TextBlock x:Name="AutoMixBetaBadge" Text="BETA" FontSize="7" FontWeight="SemiBold"
+                                               Foreground="#FFC107" HorizontalAlignment="Center" Margin="0,-2,0,0" />
+                                </StackPanel>
+                            </Button>
+                            <StackPanel x:Name="AutoMixDurationPanel" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <Slider x:Name="AutoMixDurationSlider" Minimum="1" Maximum="12" Value="5"
+                                        Width="70" TickFrequency="1" StepFrequency="0.5"
+                                        ValueChanged="AutoMixSeconds_Changed" VerticalAlignment="Center">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="AutoMix crossfade length in seconds (1–12)" />
+                                    </ToolTipService.ToolTip>
+                                </Slider>
+                                <TextBlock x:Name="AutoMixDurationLabel" Text="5s Beta" FontSize="11"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <FontIcon Glyph="&#xE992;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" VerticalAlignment="Center" />

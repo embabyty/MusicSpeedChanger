@@ -94,6 +94,14 @@
             <TextBlock Text="When off, newly opened files use the defaults above instead."
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
 
+            <!-- AutoMix (Beta, Canary builds only) -->
+            <TextBlock x:Name="AutoMixHeader" Text="AutoMix (Beta)" Style="{StaticResource SectionHeader}" />
+            <CheckBox x:Name="AutoMixEnabledBox" Content="AutoMix crossfade into the next track (Canary Beta)" />
+            <NumberBox x:Name="AutoMixSecondsBox" Header="Crossfade length (seconds, 1–12)"
+                       Minimum="1" Maximum="12" SpinButtonPlacementMode="Inline" />
+            <TextBlock x:Name="AutoMixHint" Text="DJ-style tempo-matched crossfade. Beat-grid snapping lands in a later Beta. Off when Repeat One, AB loop, or Reverse is on."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
             <!-- Appearance -->
             <TextBlock Text="Appearance" Style="{StaticResource SectionHeader}" />
             <ToggleSwitch x:Name="UseAccentSwitch" Header="Match the Windows accent color"

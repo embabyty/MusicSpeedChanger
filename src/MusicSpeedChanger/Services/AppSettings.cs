@@ -57,6 +57,15 @@ public sealed class AppSettings
     /// <summary>0 = Off, 1 = Repeat All, 2 = Repeat One.</summary>
     public int RepeatMode { get; set; } = 0;
 
+    // ----- AutoMix (Beta, Canary builds only) -----
+    /// <summary>
+    /// DJ-style tempo-matched crossfade into the next queue track.
+    /// Canary-only Beta: older/stable builds ignore these keys (see Extra round-trip).
+    /// </summary>
+    public bool AutoMixEnabled { get; set; } = false;
+    /// <summary>Crossfade length in seconds (1…12). Effective delay before track end.</summary>
+    public double AutoMixSeconds { get; set; } = 5;
+
     // ----- Appearance -----
     public bool UseSystemAccent { get; set; } = true;
     public string CustomAccentHex { get; set; } = "#2E7D32";
@@ -144,6 +153,7 @@ public sealed class AppSettings
         LastPitchSemitones = Math.Clamp(LastPitchSemitones, -12, 12);
         LastVolumePercent = Math.Clamp(LastVolumePercent, 0, 100);
         RepeatMode = Math.Clamp(RepeatMode, 0, 2);
+        AutoMixSeconds = Math.Clamp(AutoMixSeconds, 1, 12);
         if (string.IsNullOrWhiteSpace(UpdateFeedUrl)) UpdateFeedUrl = DefaultFeedUrl;
         if (string.IsNullOrWhiteSpace(CustomAccentHex)) CustomAccentHex = "#2E7D32";
         if (!string.Equals(InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase))

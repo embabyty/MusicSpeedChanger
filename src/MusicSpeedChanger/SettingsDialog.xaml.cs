@@ -50,6 +50,16 @@ public sealed partial class SettingsDialog : ContentDialog
 
         RememberEffectsBox.IsChecked = Draft.RememberEffects;
 
+        // AutoMix (Beta) is Canary-only: hide the section on Stable/Beta builds.
+        bool isCanary = UpdateService.DisplayVersion.IndexOf("canary", StringComparison.OrdinalIgnoreCase) >= 0;
+        AutoMixEnabledBox.IsChecked = Draft.AutoMixEnabled;
+        AutoMixSecondsBox.Value = Math.Clamp(Draft.AutoMixSeconds, 1, 12);
+        Visibility autoMixVisibility = isCanary ? Visibility.Visible : Visibility.Collapsed;
+        AutoMixHeader.Visibility = autoMixVisibility;
+        AutoMixEnabledBox.Visibility = autoMixVisibility;
+        AutoMixSecondsBox.Visibility = autoMixVisibility;
+        AutoMixHint.Visibility = autoMixVisibility;
+
         UseAccentSwitch.IsOn = Draft.UseSystemAccent;
         CustomAccentPicker.Color = ParseHex(Draft.CustomAccentHex, Windows.UI.Color.FromArgb(255, 0x2E, 0x7D, 0x32));
         CustomAccentPicker.IsEnabled = !Draft.UseSystemAccent;
@@ -81,6 +91,12 @@ public sealed partial class SettingsDialog : ContentDialog
         Draft.RememberFileList = RememberListBox.IsChecked == true;
 
         Draft.RememberEffects = RememberEffectsBox.IsChecked == true;
+
+        if (AutoMixEnabledBox.Visibility == Visibility.Visible)
+        {
+            Draft.AutoMixEnabled = AutoMixEnabledBox.IsChecked == true;
+            Draft.AutoMixSeconds = Math.Clamp(AutoMixSecondsBox.Value, 1, 12);
+        }
 
         Draft.UseSystemAccent = UseAccentSwitch.IsOn;
         var c = CustomAccentPicker.Color;
