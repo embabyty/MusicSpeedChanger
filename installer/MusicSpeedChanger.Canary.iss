@@ -9,8 +9,8 @@
 
 #define MyAppName "Music Speed Changer Canary"
 #define MyAppExeName "MusicSpeedChanger.exe"
-#define MyAppVersion "3.0.0 Canary 2"
-#define MyAppVersionFile "3.0.0-canary.2"
+#define MyAppVersion "3.0.0 Canary 3"
+#define MyAppVersionFile "3.0.0-canary.3"
 #define MyAppPublisher "EmAppleFlagship"
 
 [Setup]
