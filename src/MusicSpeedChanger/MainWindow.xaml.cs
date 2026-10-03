@@ -181,6 +181,7 @@ public sealed partial class MainWindow : Window
         ApplyLayoutSettings();
         UpdateNextUp();
         InitSmtc();
+        InitTaskbarThumb();
         MaybeShowBetaGateAsync();
 
         if (_settings.AutoCheckUpdates)
@@ -1701,6 +1702,7 @@ public sealed partial class MainWindow : Window
         if (AutoMixButton != null)
             AutoMixButton.IsEnabled = _tracks.Count > 1;
         _smtc.SetNextPreviousEnabled(CanGoNext(), CanGoPrevious());
+        RefreshTaskbarButtons();
         UpdateNextUp();
     }
 
@@ -2544,6 +2546,11 @@ public sealed partial class MainWindow : Window
 
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
+        TogglePlayPause();
+    }
+
+    private void TogglePlayPause()
+    {
         if (!_engine.IsLoaded) return;
         if (_engine.IsPlaying)
         {
@@ -2573,6 +2580,7 @@ public sealed partial class MainWindow : Window
     {
         if (PlayIcon != null)
             PlayIcon.Glyph = playing ? "\uE769" : "\uE768";
+        RefreshTaskbarButtons();
     }
 
     private async void ReverseButton_Click(object sender, RoutedEventArgs e)
@@ -2687,6 +2695,51 @@ public sealed partial class MainWindow : Window
         finally { _updatingSeek = false; }
         RefreshSmtcTimeline();
         RefreshTaskbarProgress();
+    }
+
+    /// <summary>
+    /// Taskbar thumbnail toolbar (hover preview): Prev / Play-Pause / Next.
+    /// Clicks arrive via THBN_CLICKED on the window message loop.
+    /// </summary>
+    private void InitTaskbarThumb()
+    {
+        try
+        {
+            var hwnd = WindowHandle;
+            if (hwnd == IntPtr.Zero) return;
+            _taskbar.EnsureThumbBar(hwnd);
+            _taskbar.PrevClicked += (_, _) => DispatcherQueue.TryEnqueue(async () =>
+            {
+                try { await MoveSelection(-1, wrap: _repeatMode == RepeatAll); } catch { /* ignore */ }
+            });
+            _taskbar.PlayPauseClicked += (_, _) => DispatcherQueue.TryEnqueue(() =>
+            {
+                try { TogglePlayPause(); } catch { /* ignore */ }
+            });
+            _taskbar.NextClicked += (_, _) => DispatcherQueue.TryEnqueue(async () =>
+            {
+                try { await SmtcNextAsync(); } catch { /* ignore */ }
+            });
+            RefreshTaskbarButtons();
+        }
+        catch { /* taskbar is best-effort */ }
+    }
+
+    private void RefreshTaskbarButtons()
+    {
+        try
+        {
+            var hwnd = WindowHandle;
+            if (hwnd == IntPtr.Zero) return;
+            _taskbar.EnsureThumbBar(hwnd);
+            _taskbar.UpdateThumbButtons(
+                hwnd,
+                isPlaying: _engine.IsLoaded && _engine.IsPlaying,
+                hasTrack: _engine.IsLoaded,
+                canPrev: CanGoPrevious(),
+                canNext: CanGoNext());
+        }
+        catch { /* ignore */ }
     }
 
     /// <summary>
@@ -3369,6 +3422,7 @@ public sealed partial class MainWindow : Window
         LoopCheckBox.IsEnabled = loaded;
         UpdateReverseUi();
         UpdatePlaylistUi();
+        RefreshTaskbarButtons();
     }
 
     private static string FormatTime(TimeSpan t)
