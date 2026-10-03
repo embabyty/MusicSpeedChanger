@@ -12,12 +12,10 @@
         </Grid.RowDefinitions>
 
         <!-- Custom title bar: transparent so the Mica backdrop shows through.
-             Set as the draggable title-bar region in code-behind. -->
-        <!-- Custom title bar: transparent so the Mica backdrop shows through.
-             Set as the draggable title-bar region in code-behind. -->
-        <Grid x:Name="AppTitleBarFull" Height="40" Background="Transparent"
-              PointerPressed="TitleBar_PointerPressed"
-              DoubleTapped="TitleBar_DoubleTapped">
+             Set as the draggable title-bar region in code-behind.
+             NOTE: never handle PointerPressed here — system drag + caption
+             buttons (min/max/close) stop working if we intercept clicks. -->
+        <Grid x:Name="AppTitleBarFull" Height="40" Background="Transparent">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -25,9 +23,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- App title and icon on the left (draggable region) -->
-            <Grid x:Name="AppTitleBarLeft" Grid.Column="0" Background="Transparent" Padding="16,0,24,0"
-                  PointerPressed="TitleBar_PointerPressed"
-                  DoubleTapped="TitleBar_DoubleTapped">
+            <Grid x:Name="AppTitleBarLeft" Grid.Column="0" Background="Transparent" Padding="16,0,24,0">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Image Source="ms-appx:///Assets/MusicSpeed.png" Width="16" Height="16"
                            Margin="0,0,8,0" VerticalAlignment="Center" />
@@ -37,9 +33,7 @@
             </Grid>
 
             <!-- Settings search bar at top of the window -->
-            <Grid Grid.Column="1" VerticalAlignment="Center" Background="Transparent"
-                  PointerPressed="TitleBar_PointerPressed"
-                  DoubleTapped="TitleBar_DoubleTapped">
+            <Grid Grid.Column="1" VerticalAlignment="Center" Background="Transparent">
                 <TextBox x:Name="SettingsSearchBox"
                          PlaceholderText="Search settings"
                          HorizontalAlignment="Center"
@@ -50,8 +44,9 @@
                          Visibility="Collapsed" />
             </Grid>
 
-            <!-- Reserve area for caption buttons on the right -->
-            <Border Grid.Column="2" Width="140" Background="Transparent" />
+            <!-- Reserve area for caption buttons on the right.
+                 Must stay hit-test invisible so min/max/close receive clicks. -->
+            <Border Grid.Column="2" Width="140" Background="Transparent" IsHitTestVisible="False" />
         </Grid>
 
     <Border Grid.Row="1" Padding="12,12,12,8">

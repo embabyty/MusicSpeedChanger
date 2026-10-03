@@ -230,63 +230,11 @@ public sealed partial class MainWindow : Window
     private IntPtr WindowHandle => WindowNative.GetWindowHandle(this);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ReleaseCapture();
-    [DllImport("user32.dll")]
     private static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
     [DllImport("user32.dll")]
     private static extern IntPtr SetCursor(IntPtr hCursor);
     private const int IDC_SIZEWE = 32644;
     private const int IDC_ARROW = 32512;
-
-    private void StartWindowDrag()
-    {
-        try
-        {
-            ReleaseCapture();
-            SendMessage(WindowHandle, 0x0112 /* WM_SYSCOMMAND */, new IntPtr(0xF012 /* SC_MOVE + 2 */), IntPtr.Zero);
-        }
-        catch { /* best effort */ }
-    }
-
-    private void TitleBar_PointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        var pt = e.GetCurrentPoint(this.Content);
-        if (!pt.Properties.IsLeftButtonPressed) return;
-
-        if (e.OriginalSource is DependencyObject dep)
-        {
-            var current = dep;
-            while (current != null)
-            {
-                if (current == SettingsSearchBox) return;
-                current = VisualTreeHelper.GetParent(current);
-            }
-        }
-        StartWindowDrag();
-    }
-
-    private void TitleBar_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
-    {
-        if (e.OriginalSource is DependencyObject dep)
-        {
-            var current = dep;
-            while (current != null)
-            {
-                if (current == SettingsSearchBox) return;
-                current = VisualTreeHelper.GetParent(current);
-            }
-        }
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            if (presenter.State == OverlappedPresenterState.Maximized)
-                presenter.Restore();
-            else
-                presenter.Maximize();
-        }
-    }
 
     // ---------- Settings ----------
 
