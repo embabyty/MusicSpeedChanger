@@ -1,15 +1,17 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using NAudio.Wave;
 using Windows.ApplicationModel.DataTransfer;
@@ -56,21 +58,29 @@ public sealed partial class MainWindow : Window
     private readonly Random _rng = new();
     private Brush? _shuffleIdleBackground;
 
-    // ----- AutoMix (Beta, Canary builds only) -----
-    // Dual-engine tempo-matched crossfade: the outgoing track keeps playing on
-    // _engine while the incoming track fades in on _mixNext. Beat-grid snapping
-    // (BPM detection + downbeat alignment) is deferred to a later Beta — tempo
-    // is matched by construction because both engines share the global slider.
+    // ----- AutoMix (Spotify-style customizable transitions) -----
+    // Dual-engine beat-synced and styled crossfade: the outgoing track keeps playing on
+    // _engine while the incoming track fades in on _mixNext. Supports Bass Swap, Equal Power
+    // Blend, Rise / High-Pass sweeps, Beat Drop, and Linear Crossfade.
     private AudioEngine? _mixNext;
     private int _mixNextIndex = -1;
     private bool _mixStarting;
-    private double _mixElapsed;
+    private readonly System.Diagnostics.Stopwatch _mixStopwatch = new();
     private double _mixDuration = 5;
+    private double _mixTempoRatio = 1;
+    private string? _mixBeatInfo;
+    private string? _mixPrewarmedKey;
+    private DateTime _lastMixFinishedTime = DateTime.MinValue;
+    private int _mixSessionId = 0;
+    private bool _isFinishingMix = false;
     private Brush? _autoMixIdleBackground;
 
     // ----- Windows media controls (Action Center / flyout / lock screen) -----
     private readonly SmtcService _smtc = new();
     private DateTime _lastSmtcTimeline = DateTime.MinValue;
+
+    // ----- Taskbar progress (Cider-style song progress on the taskbar button) -----
+    private readonly TaskbarProgressService _taskbar = new();
 
     // ----- Beta gate (Patreon login required to run beta builds) -----
     private bool _betaGateActive;
@@ -109,7 +119,7 @@ public sealed partial class MainWindow : Window
         if (Content is FrameworkElement root)
             root.RequestedTheme = ElementTheme.Dark;
         ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
+        SetTitleBar(AppTitleBarFull);
         StyleCaptionButtons();
 
         // WinUI windows have no XAML Width/Height — size the AppWindow instead.
@@ -121,6 +131,7 @@ public sealed partial class MainWindow : Window
         RestoreEffects();
         RebuildEffectsPanel();
         _navIdleBackground = NavPlayerButton.Background;
+        InitSettingsView();
         ShowView("player");
         UpdateInsiderVisibility();
         ApplyAccent();
@@ -159,12 +170,15 @@ public sealed partial class MainWindow : Window
             _settings.RepeatMode = _repeatMode;
             _settings.Save();
             _smtc.Dispose();
+            try { _taskbar.Clear(WindowHandle); } catch { /* ignore */ }
+            _taskbar.Dispose();
             try { _mixNext?.Dispose(); } catch { /* ignore */ }
             _engine.Dispose();
         };
         UpdateTransportState();
         UpdateShuffleRepeatUi();
         UpdateAutoMixUi();
+        ApplyLayoutSettings();
         UpdateNextUp();
         InitSmtc();
         MaybeShowBetaGateAsync();
@@ -214,6 +228,65 @@ public sealed partial class MainWindow : Window
     }
 
     private IntPtr WindowHandle => WindowNative.GetWindowHandle(this);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReleaseCapture();
+    [DllImport("user32.dll")]
+    private static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetCursor(IntPtr hCursor);
+    private const int IDC_SIZEWE = 32644;
+    private const int IDC_ARROW = 32512;
+
+    private void StartWindowDrag()
+    {
+        try
+        {
+            ReleaseCapture();
+            SendMessage(WindowHandle, 0x0112 /* WM_SYSCOMMAND */, new IntPtr(0xF012 /* SC_MOVE + 2 */), IntPtr.Zero);
+        }
+        catch { /* best effort */ }
+    }
+
+    private void TitleBar_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(this.Content);
+        if (!pt.Properties.IsLeftButtonPressed) return;
+
+        if (e.OriginalSource is DependencyObject dep)
+        {
+            var current = dep;
+            while (current != null)
+            {
+                if (current == SettingsSearchBox) return;
+                current = VisualTreeHelper.GetParent(current);
+            }
+        }
+        StartWindowDrag();
+    }
+
+    private void TitleBar_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (e.OriginalSource is DependencyObject dep)
+        {
+            var current = dep;
+            while (current != null)
+            {
+                if (current == SettingsSearchBox) return;
+                current = VisualTreeHelper.GetParent(current);
+            }
+        }
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            if (presenter.State == OverlappedPresenterState.Maximized)
+                presenter.Restore();
+            else
+                presenter.Maximize();
+        }
+    }
 
     // ---------- Settings ----------
 
@@ -311,36 +384,753 @@ public sealed partial class MainWindow : Window
         return fallback;
     }
 
-    private async void SettingsButton_Click(object sender, RoutedEventArgs e)
+    // ---------- Settings View (Full Page) ----------
+
+    public sealed record SettingsNavItem(string Name, string Glyph);
+
+    private static readonly SettingsNavItem[] SettingsNavItems =
     {
-        var dlg = new SettingsDialog(_settings) { XamlRoot = Content.XamlRoot };
-        dlg.InstallUpdateRequested += async (_, info) =>
+        new("About", "\uE946"),
+        new("Audio", "\uE8D6"),
+        new("Appearance", "\uE771"),
+    };
+
+    private UpdateInfo? _settingsPendingUpdate;
+    private bool _settingsChecking;
+    private bool _settingsSwitching;
+    private bool _syncingSettingsView;
+
+    private void InitSettingsView()
+    {
+        if (SettingsNavList != null)
         {
-            // A verified Patreon link travels with the install, so a fresh beta
-            // build opens straight in via silent re-verification (same settings file).
-            if (dlg.Draft.BetaAccessUnlocked)
-            {
-                _settings.BetaAccessUnlocked = true;
-                _settings.PatreonRefreshToken = dlg.Draft.PatreonRefreshToken;
-                _settings.PatreonFullName = dlg.Draft.PatreonFullName;
-                _settings.Save();
-            }
-            dlg.Hide();
-            await DownloadAndInstallAsync(info);
-        };
-        if (await dlg.ShowAsync() == ContentDialogResult.Primary)
-        {
-            bool autoMixWasOn = IsAutoMixOn();
-            _settings.CopyFrom(dlg.Draft);
-            ApplyLiveSettings();
-            ApplyAccent();
-            _settings.Save();
-            if (!IsAutoMixOn() && autoMixWasOn)
-                CancelAutoMix();
-            UpdateInsiderVisibility();
-            UpdateAutoMixUi();
-            UpdateNextUp();
+            SettingsNavList.ItemsSource = SettingsNavItems;
+            SettingsNavList.SelectedIndex = 0;
         }
+        ShowSettingsCategory("About");
+    }
+
+    private void SettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        ShowView("settings");
+    }
+
+    private void SettingsBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        SaveSettingsFromView();
+        ShowView("player");
+    }
+
+    private bool _settingsSidebarExpanded = true;
+    private double _settingsSidebarExpandedWidth = 220;
+    private bool _isDraggingSettingsSplitter;
+    private double _splitterStartX;
+    private double _splitterStartWidth;
+
+    private void SettingsSidebarToggle_Click(object sender, RoutedEventArgs e)
+    {
+        SetSettingsSidebarExpanded(!_settingsSidebarExpanded);
+    }
+
+    private void SetSettingsSidebarExpanded(bool expanded)
+    {
+        _settingsSidebarExpanded = expanded;
+        if (SettingsSidebarColumn == null) return;
+
+        if (expanded)
+        {
+            double w = _settingsSidebarExpandedWidth >= 120 ? _settingsSidebarExpandedWidth : 220;
+            SettingsSidebarColumn.Width = new GridLength(w);
+            if (SettingsHeaderExpanded != null) SettingsHeaderExpanded.Visibility = Visibility.Visible;
+            if (SettingsHeaderCollapsed != null) SettingsHeaderCollapsed.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            if (SettingsSidebarColumn.ActualWidth >= 120)
+                _settingsSidebarExpandedWidth = SettingsSidebarColumn.ActualWidth;
+            SettingsSidebarColumn.Width = new GridLength(56);
+            if (SettingsHeaderExpanded != null) SettingsHeaderExpanded.Visibility = Visibility.Collapsed;
+            if (SettingsHeaderCollapsed != null) SettingsHeaderCollapsed.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void SettingsSplitter_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        try { SetCursor(LoadCursor(IntPtr.Zero, IDC_SIZEWE)); } catch { }
+    }
+
+    private void SettingsSplitter_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isDraggingSettingsSplitter)
+        {
+            try { SetCursor(LoadCursor(IntPtr.Zero, IDC_ARROW)); } catch { }
+        }
+    }
+
+    private void SettingsSplitter_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(SettingsView);
+        if (!pt.Properties.IsLeftButtonPressed) return;
+
+        _isDraggingSettingsSplitter = true;
+        _splitterStartX = pt.Position.X;
+        _splitterStartWidth = SettingsSidebarColumn?.ActualWidth ?? 220;
+        if (sender is UIElement el)
+            el.CapturePointer(e.Pointer);
+    }
+
+    private void SettingsSplitter_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        try { SetCursor(LoadCursor(IntPtr.Zero, IDC_SIZEWE)); } catch { }
+
+        if (!_isDraggingSettingsSplitter || SettingsSidebarColumn == null) return;
+        var pt = e.GetCurrentPoint(SettingsView);
+        double delta = pt.Position.X - _splitterStartX;
+        double newWidth = Math.Clamp(_splitterStartWidth + delta, 56, 480);
+
+        SettingsSidebarColumn.Width = new GridLength(newWidth);
+        if (newWidth < 120)
+        {
+            if (_settingsSidebarExpanded)
+            {
+                _settingsSidebarExpanded = false;
+                if (SettingsHeaderExpanded != null) SettingsHeaderExpanded.Visibility = Visibility.Collapsed;
+                if (SettingsHeaderCollapsed != null) SettingsHeaderCollapsed.Visibility = Visibility.Visible;
+            }
+        }
+        else
+        {
+            _settingsSidebarExpandedWidth = newWidth;
+            if (!_settingsSidebarExpanded)
+            {
+                _settingsSidebarExpanded = true;
+                if (SettingsHeaderExpanded != null) SettingsHeaderExpanded.Visibility = Visibility.Visible;
+                if (SettingsHeaderCollapsed != null) SettingsHeaderCollapsed.Visibility = Visibility.Collapsed;
+            }
+        }
+    }
+
+    private void SettingsSplitter_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_isDraggingSettingsSplitter)
+        {
+            _isDraggingSettingsSplitter = false;
+            if (sender is UIElement el)
+                el.ReleasePointerCapture(e.Pointer);
+            try { SetCursor(LoadCursor(IntPtr.Zero, IDC_ARROW)); } catch { }
+
+            if (SettingsSidebarColumn != null && SettingsSidebarColumn.ActualWidth < 120)
+            {
+                SetSettingsSidebarExpanded(false);
+            }
+        }
+    }
+
+    private void SettingsSplitter_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        _settingsSidebarExpandedWidth = 220;
+        SetSettingsSidebarExpanded(true);
+    }
+
+    private void SettingsNavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SettingsNavList?.SelectedItem is SettingsNavItem item)
+            ShowSettingsCategory(item.Name);
+    }
+
+    private string _currentSettingsCategory = "About";
+
+    private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (SettingsSearchBox == null || SettingsNavList == null) return;
+        string q = (SettingsSearchBox.Text ?? "").Trim();
+        var filtered = string.IsNullOrEmpty(q)
+            ? SettingsNavItems
+            : SettingsNavItems.Where(n => n.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).ToArray();
+        SettingsNavList.ItemsSource = filtered;
+        if (filtered.Length > 0)
+        {
+            var current = filtered.FirstOrDefault(n =>
+                string.Equals(n.Name, _currentSettingsCategory, StringComparison.OrdinalIgnoreCase))
+                ?? filtered[0];
+            SettingsNavList.SelectedItem = current;
+        }
+    }
+
+    private void ShowSettingsCategory(string name)
+    {
+        _currentSettingsCategory = name;
+        if (SettingsAboutPanel != null)
+            SettingsAboutPanel.Visibility = string.Equals(name, "About", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible : Visibility.Collapsed;
+        if (SettingsAudioPanel != null)
+            SettingsAudioPanel.Visibility = string.Equals(name, "Audio", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible : Visibility.Collapsed;
+        if (SettingsAppearancePanel != null)
+            SettingsAppearancePanel.Visibility = string.Equals(name, "Appearance", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void SyncSettingsViewFromModel()
+    {
+        _syncingSettingsView = true;
+        try
+        {
+            if (SettingsVersionLabel != null)
+                SettingsVersionLabel.Text = $"Music Speed Changer {UpdateService.DisplayVersion}";
+            if (SettingsOwnerEmailLabel != null)
+                SettingsOwnerEmailLabel.Text = $"{UpdateService.OwnerName} — {UpdateService.OwnerEmail}";
+
+            if (SettingsAutoCheckSwitch != null)
+                SettingsAutoCheckSwitch.IsOn = _settings.AutoCheckUpdates;
+            if (SettingsFeedUrlBox != null)
+                SettingsFeedUrlBox.Text = _settings.UpdateFeedUrl;
+            if (SettingsBetaUpdatesBox != null)
+                SettingsBetaUpdatesBox.IsChecked = _settings.IncludeBetaUpdates;
+            if (SettingsInsiderChannelBox != null)
+                SettingsInsiderChannelBox.SelectedItem = string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase)
+                    ? "Canary" : "Beta";
+            UpdateSettingsPatreonUi();
+
+            if (SettingsDefaultTempoBox != null)
+                SettingsDefaultTempoBox.Value = _settings.DefaultTempoPercent;
+            if (SettingsDefaultPitchBox != null)
+                SettingsDefaultPitchBox.Value = _settings.DefaultPitchSemitones;
+            if (SettingsApplyDefaultsBox != null)
+                SettingsApplyDefaultsBox.IsChecked = _settings.ApplyDefaultsOnFileLoad;
+            if (SettingsTempoStepBox != null)
+                SettingsTempoStepBox.Value = _settings.TempoSliderStep;
+            if (SettingsPitchStepBox != null)
+                SettingsPitchStepBox.Value = _settings.PitchSliderStep;
+
+            if (SettingsShowTempoBox != null)
+                SettingsShowTempoBox.IsChecked = _settings.ShowTempoPanel;
+            if (SettingsShowPitchBox != null)
+                SettingsShowPitchBox.IsChecked = _settings.ShowPitchPanel;
+            if (SettingsShowLoopBox != null)
+                SettingsShowLoopBox.IsChecked = _settings.ShowLoopPanel;
+            if (SettingsShowEqBox != null)
+                SettingsShowEqBox.IsChecked = _settings.ShowEqPanel;
+            if (SettingsWaveformPeaksBox != null)
+                SettingsWaveformPeaksBox.Value = _settings.WaveformPeaks;
+            if (SettingsClickToSeekBox != null)
+                SettingsClickToSeekBox.IsChecked = _settings.ClickToSeek;
+            if (SettingsRememberListBox != null)
+                SettingsRememberListBox.IsChecked = _settings.RememberFileList;
+            if (SettingsRememberEffectsBox != null)
+                SettingsRememberEffectsBox.IsChecked = _settings.RememberEffects;
+
+            if (SettingsLayoutTypeBox != null)
+                SettingsLayoutTypeBox.SelectedItem = _settings.LayoutType switch
+                {
+                    "Mavericks" => "Mavericks",
+                    "Calico" => "Calico",
+                    "Montara" => "Montara",
+                    _ => "Mojave",
+                };
+            if (SettingsPlayerTypeBox != null)
+                SettingsPlayerTypeBox.SelectedItem = _settings.PlayerType switch
+                {
+                    "Compact" => "Compact",
+                    "CompactInline" => "Compact Inline",
+                    _ => "Comfy",
+                };
+
+            if (SettingsAutoMixEnabledBox != null)
+                SettingsAutoMixEnabledBox.IsChecked = _settings.AutoMixEnabled;
+            if (SettingsAutoMixSecondsBox != null)
+                SettingsAutoMixSecondsBox.Value = Math.Clamp(_settings.AutoMixSeconds, 1, 12);
+
+            if (SettingsUseAccentSwitch != null)
+                SettingsUseAccentSwitch.IsOn = _settings.UseSystemAccent;
+            if (SettingsCustomAccentPicker != null)
+            {
+                SettingsCustomAccentPicker.Color = ParseHex(_settings.CustomAccentHex, Windows.UI.Color.FromArgb(255, 0x2E, 0x7D, 0x32));
+                SettingsCustomAccentPicker.IsEnabled = !_settings.UseSystemAccent;
+            }
+        }
+        finally
+        {
+            _syncingSettingsView = false;
+        }
+    }
+
+    private void SaveSettingsFromView()
+    {
+        if (_syncingSettingsView) return;
+
+        bool autoMixWasOn = IsAutoMixOn();
+
+        if (SettingsAutoCheckSwitch != null)
+            _settings.AutoCheckUpdates = SettingsAutoCheckSwitch.IsOn;
+        if (SettingsFeedUrlBox != null)
+            _settings.UpdateFeedUrl = SettingsFeedUrlBox.Text?.Trim() ?? "";
+        if (SettingsBetaUpdatesBox != null)
+            _settings.IncludeBetaUpdates = SettingsBetaUpdatesBox.IsChecked == true;
+        if (SettingsInsiderChannelBox != null)
+            _settings.InsiderChannel = string.Equals(SettingsInsiderChannelBox.SelectedItem as string, "Canary", StringComparison.OrdinalIgnoreCase)
+                ? "Canary" : "Beta";
+
+        if (SettingsDefaultTempoBox != null)
+            _settings.DefaultTempoPercent = SettingsDefaultTempoBox.Value;
+        if (SettingsDefaultPitchBox != null)
+            _settings.DefaultPitchSemitones = SettingsDefaultPitchBox.Value;
+        if (SettingsApplyDefaultsBox != null)
+            _settings.ApplyDefaultsOnFileLoad = SettingsApplyDefaultsBox.IsChecked == true;
+        if (SettingsTempoStepBox != null)
+            _settings.TempoSliderStep = SettingsTempoStepBox.Value;
+        if (SettingsPitchStepBox != null)
+            _settings.PitchSliderStep = SettingsPitchStepBox.Value;
+
+        if (SettingsShowTempoBox != null)
+            _settings.ShowTempoPanel = SettingsShowTempoBox.IsChecked == true;
+        if (SettingsShowPitchBox != null)
+            _settings.ShowPitchPanel = SettingsShowPitchBox.IsChecked == true;
+        if (SettingsShowLoopBox != null)
+            _settings.ShowLoopPanel = SettingsShowLoopBox.IsChecked == true;
+        if (SettingsShowEqBox != null)
+            _settings.ShowEqPanel = SettingsShowEqBox.IsChecked == true;
+        if (SettingsWaveformPeaksBox != null)
+            _settings.WaveformPeaks = (int)SettingsWaveformPeaksBox.Value;
+        if (SettingsClickToSeekBox != null)
+            _settings.ClickToSeek = SettingsClickToSeekBox.IsChecked == true;
+        if (SettingsRememberListBox != null)
+            _settings.RememberFileList = SettingsRememberListBox.IsChecked == true;
+        if (SettingsRememberEffectsBox != null)
+            _settings.RememberEffects = SettingsRememberEffectsBox.IsChecked == true;
+
+        if (SettingsLayoutTypeBox != null)
+            _settings.LayoutType = SettingsLayoutTypeBox.SelectedItem as string ?? "Mojave";
+        if (SettingsPlayerTypeBox != null)
+            _settings.PlayerType = string.Equals(SettingsPlayerTypeBox.SelectedItem as string, "Compact Inline", StringComparison.OrdinalIgnoreCase)
+                ? "CompactInline"
+                : string.Equals(SettingsPlayerTypeBox.SelectedItem as string, "Compact", StringComparison.OrdinalIgnoreCase)
+                    ? "Compact" : "Comfy";
+
+        if (SettingsAutoMixEnabledBox != null)
+            _settings.AutoMixEnabled = SettingsAutoMixEnabledBox.IsChecked == true;
+        if (SettingsAutoMixSecondsBox != null)
+            _settings.AutoMixSeconds = Math.Clamp(SettingsAutoMixSecondsBox.Value, 1, 12);
+
+        if (SettingsUseAccentSwitch != null)
+            _settings.UseSystemAccent = SettingsUseAccentSwitch.IsOn;
+        if (SettingsCustomAccentPicker != null)
+        {
+            var c = SettingsCustomAccentPicker.Color;
+            _settings.CustomAccentHex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+        }
+
+        _settings.Save();
+        ApplyLiveSettings();
+        ApplyAccent();
+        ApplyLayoutSettings();
+        if (!IsAutoMixOn() && autoMixWasOn)
+            CancelAutoMix();
+        UpdateInsiderVisibility();
+        UpdateAutoMixUi();
+        UpdateNextUp();
+    }
+
+    private void UpdateSettingsPatreonUi()
+    {
+        bool linked = _settings.BetaAccessUnlocked && !string.IsNullOrEmpty(_settings.PatreonRefreshToken);
+        if (SettingsPatreonLoginButton != null)
+            SettingsPatreonLoginButton.Visibility = linked ? Visibility.Collapsed : Visibility.Visible;
+        if (SettingsPatreonUnlinkButton != null)
+            SettingsPatreonUnlinkButton.Visibility = linked ? Visibility.Visible : Visibility.Collapsed;
+        if (SettingsPatreonStatusLabel == null) return;
+        if (linked)
+        {
+            string who = string.IsNullOrWhiteSpace(_settings.PatreonFullName) ? "" : $" as {_settings.PatreonFullName}";
+            SettingsPatreonStatusLabel.Text = $"Linked{who} ✓ — beta downloads unlocked.";
+        }
+        else if (string.IsNullOrWhiteSpace(SettingsPatreonStatusLabel.Text) ||
+                 SettingsPatreonStatusLabel.Text.StartsWith("Linked", StringComparison.Ordinal))
+        {
+            SettingsPatreonStatusLabel.Text = "Not linked — log in with Patreon to unlock betas.";
+        }
+    }
+
+    private void SettingsAutoCheckSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.AutoCheckUpdates = SettingsAutoCheckSwitch.IsOn;
+        _settings.Save();
+    }
+
+    private void SettingsFeedUrlBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.UpdateFeedUrl = SettingsFeedUrlBox.Text?.Trim() ?? "";
+        _settings.Save();
+    }
+
+    private void SettingsBetaUpdatesBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.IncludeBetaUpdates = SettingsBetaUpdatesBox.IsChecked == true;
+        _settings.Save();
+    }
+
+    private void SettingsInsiderChannelBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.InsiderChannel = string.Equals(SettingsInsiderChannelBox.SelectedItem as string, "Canary", StringComparison.OrdinalIgnoreCase)
+            ? "Canary" : "Beta";
+        _settings.Save();
+    }
+
+    private async void SettingsPatreonButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(new Uri(UpdateService.PatreonPageUrl));
+        }
+        catch { /* best effort */ }
+    }
+
+    private async void SettingsEmailOwnerButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(new Uri($"mailto:{UpdateService.OwnerEmail}"));
+        }
+        catch { /* best effort */ }
+    }
+
+    private async void SettingsPatreonLoginButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SettingsPatreonLoginButton == null) return;
+        SettingsPatreonLoginButton.IsEnabled = false;
+        try
+        {
+            var progress = new Progress<string>(s => { if (SettingsPatreonStatusLabel != null) SettingsPatreonStatusLabel.Text = s; });
+            var (account, error) = await PatreonAuthService.LoginAsync(progress);
+            if (account == null)
+            {
+                if (SettingsPatreonStatusLabel != null) SettingsPatreonStatusLabel.Text = error ?? "Login didn't complete.";
+                return;
+            }
+            _settings.BetaAccessUnlocked = true;
+            _settings.PatreonRefreshToken = account.RefreshToken;
+            _settings.PatreonFullName = account.FullName;
+            _settings.IncludeBetaUpdates = true;
+            _settings.Save();
+            if (SettingsBetaUpdatesBox != null) SettingsBetaUpdatesBox.IsChecked = true;
+            UpdateSettingsPatreonUi();
+            UpdateInsiderVisibility();
+        }
+        finally { SettingsPatreonLoginButton.IsEnabled = true; }
+    }
+
+    private void SettingsPatreonUnlinkButton_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.BetaAccessUnlocked = false;
+        _settings.PatreonRefreshToken = null;
+        _settings.PatreonFullName = null;
+        _settings.Save();
+        if (SettingsPatreonStatusLabel != null)
+            SettingsPatreonStatusLabel.Text = "Not linked — log in with Patreon to unlock betas.";
+        UpdateSettingsPatreonUi();
+        UpdateInsiderVisibility();
+    }
+
+    private async void SettingsCheckNowButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsChecking) return;
+        _settingsChecking = true;
+        _settingsPendingUpdate = null;
+        if (SettingsInstallUpdateButton != null) SettingsInstallUpdateButton.Visibility = Visibility.Collapsed;
+        if (SettingsUpdateStatusLabel != null) SettingsUpdateStatusLabel.Text = "Checking…";
+        try
+        {
+            bool wantBeta = SettingsBetaUpdatesBox?.IsChecked == true;
+            bool wantCanary = wantBeta && _settings.BetaAccessUnlocked &&
+                string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase);
+            var info = await UpdateService.CheckForUpdateAsync(SettingsFeedUrlBox?.Text?.Trim() ?? "", wantBeta, wantCanary);
+            if (info == null)
+            {
+                if (SettingsUpdateStatusLabel != null)
+                {
+                    SettingsUpdateStatusLabel.Text = wantBeta
+                        ? $"You're up to date ({UpdateService.DisplayVersion})."
+                        : $"You're up to date ({UpdateService.DisplayVersion}).\nBeta builds are gated for Patreon supporters — tick “Include beta updates” to look for them.";
+                }
+            }
+            else if (info.IsBeta && !_settings.BetaAccessUnlocked)
+            {
+                if (!string.IsNullOrEmpty(_settings.PatreonRefreshToken))
+                {
+                    if (SettingsUpdateStatusLabel != null) SettingsUpdateStatusLabel.Text = "Re-verifying Patreon membership…";
+                    var account = await PatreonAuthService.RefreshAndVerifyAsync(_settings.PatreonRefreshToken);
+                    if (account != null)
+                    {
+                        _settings.BetaAccessUnlocked = true;
+                        _settings.PatreonRefreshToken = account.RefreshToken;
+                        _settings.PatreonFullName = account.FullName;
+                        _settings.Save();
+                        UpdateSettingsPatreonUi();
+                    }
+                }
+            }
+
+            if (info != null && info.IsBeta && !_settings.BetaAccessUnlocked)
+            {
+                if (SettingsUpdateStatusLabel != null)
+                {
+                    SettingsUpdateStatusLabel.Text = $"Version {info.Version} is a beta for Patreon supporters.\n" +
+                        "Use “Login with Patreon” above, then check again to install it.";
+                }
+            }
+            else if (info != null)
+            {
+                _settingsPendingUpdate = info;
+                if (SettingsUpdateStatusLabel != null)
+                {
+                    SettingsUpdateStatusLabel.Text = info.IsBeta
+                        ? $"Beta {info.Version} is available.\n{UpdateService.CleanNotes(info.Notes)}"
+                        : $"Version {info.Version} is available.\n{UpdateService.CleanNotes(info.Notes)}";
+                }
+                if (SettingsInstallUpdateButton != null) SettingsInstallUpdateButton.Visibility = Visibility.Visible;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (SettingsUpdateStatusLabel != null) SettingsUpdateStatusLabel.Text = $"Check failed: {ex.Message}";
+        }
+        finally { _settingsChecking = false; }
+    }
+
+    private async void SettingsInstallUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsPendingUpdate != null)
+        {
+            await DownloadAndInstallAsync(_settingsPendingUpdate);
+        }
+    }
+
+    private async void SettingsSwitchToBetaButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settingsSwitching) return;
+        _settingsSwitching = true;
+        if (SettingsSwitchToBetaButton != null) SettingsSwitchToBetaButton.IsEnabled = false;
+        if (SettingsInstallUpdateButton != null) SettingsInstallUpdateButton.Visibility = Visibility.Collapsed;
+        try
+        {
+            if (!_settings.BetaAccessUnlocked && !string.IsNullOrEmpty(_settings.PatreonRefreshToken))
+            {
+                if (SettingsBetaStatusLabel != null) SettingsBetaStatusLabel.Text = "Re-verifying Patreon membership…";
+                var silent = await PatreonAuthService.RefreshAndVerifyAsync(_settings.PatreonRefreshToken);
+                if (silent != null)
+                {
+                    _settings.BetaAccessUnlocked = true;
+                    _settings.PatreonRefreshToken = silent.RefreshToken;
+                    _settings.PatreonFullName = silent.FullName;
+                    _settings.Save();
+                    UpdateSettingsPatreonUi();
+                }
+                else
+                {
+                    _settings.BetaAccessUnlocked = false;
+                    _settings.PatreonRefreshToken = null;
+                    _settings.PatreonFullName = null;
+                    _settings.Save();
+                    UpdateSettingsPatreonUi();
+                }
+            }
+            if (!_settings.BetaAccessUnlocked)
+            {
+                var progress = new Progress<string>(s => { if (SettingsBetaStatusLabel != null) SettingsBetaStatusLabel.Text = s; });
+                var (account, error) = await PatreonAuthService.LoginAsync(progress);
+                if (account == null)
+                {
+                    if (SettingsBetaStatusLabel != null) SettingsBetaStatusLabel.Text = error ?? "Login didn't complete.";
+                    return;
+                }
+                _settings.BetaAccessUnlocked = true;
+                _settings.PatreonRefreshToken = account.RefreshToken;
+                _settings.PatreonFullName = account.FullName;
+                _settings.Save();
+                UpdateSettingsPatreonUi();
+            }
+            if (SettingsBetaStatusLabel != null) SettingsBetaStatusLabel.Text = "Checking for beta builds…";
+            bool wantCanary = _settings.BetaAccessUnlocked &&
+                string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase);
+            var info = await UpdateService.CheckForUpdateAsync(SettingsFeedUrlBox?.Text?.Trim() ?? "", includeBeta: true, includeCanary: wantCanary);
+            if (info == null || !info.IsBeta)
+            {
+                if (SettingsBetaStatusLabel != null) SettingsBetaStatusLabel.Text = "No beta build available right now — you're up to date.";
+                return;
+            }
+            _settingsPendingUpdate = info;
+            if (SettingsBetaStatusLabel != null) SettingsBetaStatusLabel.Text = $"Beta {info.Version} is available.\n{UpdateService.CleanNotes(info.Notes)}";
+            if (SettingsInstallUpdateButton != null) SettingsInstallUpdateButton.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            if (SettingsBetaStatusLabel != null) SettingsBetaStatusLabel.Text = $"Beta switch failed: {ex.Message}";
+        }
+        finally
+        {
+            _settingsSwitching = false;
+            if (SettingsSwitchToBetaButton != null) SettingsSwitchToBetaButton.IsEnabled = true;
+        }
+    }
+
+    private void SettingsDefaultTempoBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_syncingSettingsView || double.IsNaN(args.NewValue)) return;
+        _settings.DefaultTempoPercent = args.NewValue;
+        _settings.Save();
+    }
+
+    private void SettingsDefaultPitchBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_syncingSettingsView || double.IsNaN(args.NewValue)) return;
+        _settings.DefaultPitchSemitones = args.NewValue;
+        _settings.Save();
+    }
+
+    private void SettingsApplyDefaultsBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.ApplyDefaultsOnFileLoad = SettingsApplyDefaultsBox.IsChecked == true;
+        _settings.Save();
+    }
+
+    private void SettingsTempoStepBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_syncingSettingsView || double.IsNaN(args.NewValue)) return;
+        _settings.TempoSliderStep = args.NewValue;
+        _settings.Save();
+        ApplyLiveSettings();
+    }
+
+    private void SettingsPitchStepBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_syncingSettingsView || double.IsNaN(args.NewValue)) return;
+        _settings.PitchSliderStep = args.NewValue;
+        _settings.Save();
+        ApplyLiveSettings();
+    }
+
+    private void SettingsRememberEffectsBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.RememberEffects = SettingsRememberEffectsBox.IsChecked == true;
+        _settings.Save();
+    }
+
+    private void SettingsAutoMixEnabledBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        bool autoMixWasOn = IsAutoMixOn();
+        _settings.AutoMixEnabled = SettingsAutoMixEnabledBox.IsChecked == true;
+        _settings.Save();
+        if (!IsAutoMixOn() && autoMixWasOn)
+            CancelAutoMix();
+        UpdateAutoMixUi();
+        UpdateNextUp();
+    }
+
+    private void SettingsAutoMixSecondsBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_syncingSettingsView || double.IsNaN(args.NewValue)) return;
+        _settings.AutoMixSeconds = Math.Clamp(args.NewValue, 1, 12);
+        _settings.Save();
+        UpdateAutoMixUi();
+    }
+
+    private void SettingsShowTempoBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.ShowTempoPanel = SettingsShowTempoBox.IsChecked == true;
+        _settings.Save();
+        ApplyLiveSettings();
+    }
+
+    private void SettingsShowPitchBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.ShowPitchPanel = SettingsShowPitchBox.IsChecked == true;
+        _settings.Save();
+        ApplyLiveSettings();
+    }
+
+    private void SettingsShowLoopBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.ShowLoopPanel = SettingsShowLoopBox.IsChecked == true;
+        _settings.Save();
+        ApplyLiveSettings();
+    }
+
+    private void SettingsShowEqBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.ShowEqPanel = SettingsShowEqBox.IsChecked == true;
+        _settings.Save();
+        ApplyLiveSettings();
+    }
+
+    private void SettingsWaveformPeaksBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_syncingSettingsView || double.IsNaN(args.NewValue)) return;
+        _settings.WaveformPeaks = (int)args.NewValue;
+        _settings.Save();
+    }
+
+    private void SettingsClickToSeekBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.ClickToSeek = SettingsClickToSeekBox.IsChecked == true;
+        _settings.Save();
+    }
+
+    private void SettingsRememberListBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.RememberFileList = SettingsRememberListBox.IsChecked == true;
+        _settings.Save();
+    }
+
+    private void SettingsLayoutTypeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.LayoutType = SettingsLayoutTypeBox.SelectedItem as string ?? "Mojave";
+        _settings.Save();
+        ApplyLayoutSettings();
+    }
+
+    private void SettingsPlayerTypeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.PlayerType = string.Equals(SettingsPlayerTypeBox.SelectedItem as string, "Compact Inline", StringComparison.OrdinalIgnoreCase)
+            ? "CompactInline"
+            : string.Equals(SettingsPlayerTypeBox.SelectedItem as string, "Compact", StringComparison.OrdinalIgnoreCase)
+                ? "Compact" : "Comfy";
+        _settings.Save();
+        ApplyLayoutSettings();
+    }
+
+    private void SettingsUseAccentSwitch_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.UseSystemAccent = SettingsUseAccentSwitch.IsOn;
+        if (SettingsCustomAccentPicker != null)
+            SettingsCustomAccentPicker.IsEnabled = !SettingsUseAccentSwitch.IsOn;
+        _settings.Save();
+        ApplyAccent();
+    }
+
+    private void SettingsCustomAccentPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
+    {
+        if (_syncingSettingsView) return;
+        var c = args.NewColor;
+        _settings.CustomAccentHex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+        _settings.Save();
+        if (!_settings.UseSystemAccent)
+            ApplyAccent();
     }
 
     // ---------- Automatic updates ----------
@@ -350,18 +1140,48 @@ public sealed partial class MainWindow : Window
         try
         {
             await Task.Delay(2500);
+            if (!_settings.AutoCheckUpdates) return;
             if (_betaGateActive) return; // gated: user verifies (or exits) first
-            if (_settings.BetaAccessUnlocked &&
-                string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase))
+
+            if (_settings.BetaAccessUnlocked)
             {
-                // Canary channel: prefer the weekly build, fall back to Beta/stable.
+                bool isCanaryChannel = string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase);
                 var (beta, canary) = await UpdateService.GetInsiderUpdatesAsync(_settings.UpdateFeedUrl);
-                if (canary != null) { await PromptUpdateAsync(canary); return; }
-                if (beta != null) { await PromptUpdateAsync(beta); return; }
+
+                if (isCanaryChannel)
+                {
+                    // Canary channel: prefer the weekly build, fall back to Beta/stable if not running Canary.
+                    if (canary != null && UpdateService.IsNewerThanCurrent(canary))
+                    {
+                        await PromptUpdateAsync(canary);
+                        return;
+                    }
+                    if (UpdateService.CurrentChannel != "Canary" && beta != null && UpdateService.IsNewerThanCurrent(beta))
+                    {
+                        await PromptUpdateAsync(beta);
+                        return;
+                    }
+                }
+                else
+                {
+                    // Beta channel: prefer the beta build if newer.
+                    if (beta != null && UpdateService.IsNewerThanCurrent(beta))
+                    {
+                        await PromptUpdateAsync(beta);
+                        return;
+                    }
+                }
             }
-            var info = await UpdateService.CheckForUpdateAsync(_settings.UpdateFeedUrl, _settings.IncludeBetaUpdates);
-            if (info == null) return;
-            await PromptUpdateAsync(info);
+
+            var info = await UpdateService.CheckForUpdateAsync(
+                _settings.UpdateFeedUrl,
+                includeBeta: _settings.IncludeBetaUpdates && _settings.BetaAccessUnlocked,
+                includeCanary: _settings.BetaAccessUnlocked && string.Equals(_settings.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase));
+
+            if (info != null && UpdateService.IsNewerThanCurrent(info))
+            {
+                await PromptUpdateAsync(info);
+            }
         }
         catch { /* silent: updates are best-effort */ }
     }
@@ -374,14 +1194,15 @@ public sealed partial class MainWindow : Window
             await PromptBetaGateAsync(info);
             return;
         }
+        string displayTag = !string.IsNullOrEmpty(info.Tag) ? info.Tag : info.Version.ToString();
         var dlg = new ContentDialog
         {
-            Title = info.IsCanary ? $"Canary update available — {info.Version}"
-                : info.IsBeta ? $"Beta update available — {info.Version}"
-                : $"Update available — {info.Version}",
+            Title = info.IsCanary ? $"Canary update available — {displayTag}"
+                : info.IsBeta ? $"Beta update available — {displayTag}"
+                : $"Update available — {displayTag}",
             Content = string.IsNullOrWhiteSpace(info.Notes)
-                ? $"Version {info.Version} is ready to install."
-                : $"Version {info.Version} is ready to install.\n\n{UpdateService.CleanNotes(info.Notes)}",
+                ? $"Version {displayTag} is ready to install."
+                : $"Version {displayTag} is ready to install.\n\n{UpdateService.CleanNotes(info.Notes)}",
             PrimaryButtonText = "Download & install",
             CloseButtonText = "Later",
             DefaultButton = ContentDialogButton.Primary,
@@ -610,8 +1431,19 @@ public sealed partial class MainWindow : Window
         }
         string date = info.PublishedAt == default ? "" : $" — published {info.PublishedAt:yyyy-MM-dd}";
         string tag = string.IsNullOrEmpty(info.Tag) ? info.Version.ToString() : info.Tag;
-        status.Text = $"{channel} {tag}{date}";
-        notes.Text = UpdateService.CleanNotes(info?.Notes);
+        bool isNewer = UpdateService.IsNewerThanCurrent(info);
+        if (!isNewer && (string.Equals(UpdateService.CurrentChannel, channel, StringComparison.OrdinalIgnoreCase) ||
+                         UpdateService.CurrentReleaseVersion.CompareTo(UpdateService.ParseReleaseVersion(info)) >= 0))
+        {
+            status.Text = $"{channel} {tag}{date} — up to date";
+            installButton.Content = $"Reinstall {channel}";
+        }
+        else
+        {
+            status.Text = $"{channel} {tag}{date}";
+            installButton.Content = $"Download & install {channel}";
+        }
+        notes.Text = UpdateService.CleanNotes(info.Notes);
         installButton.Visibility = Visibility.Visible;
     }
 
@@ -644,6 +1476,105 @@ public sealed partial class MainWindow : Window
             StatusLabel.Text = "Update failed";
             await ShowErrorAsync($"Update failed:\n{ex.Message}");
         }
+    }
+
+    // ---------- Layout (Cider-style Layout Type + Player Type) ----------
+
+    /// <summary>Applies the Layout Type (queue dock) + Player Type (transport density).</summary>
+    private void ApplyLayoutSettings()
+    {
+        ApplyLayoutType();
+        ApplyPlayerType();
+    }
+
+    /// <summary>
+    /// Mojave = queue left 230, Mavericks = queue right 230,
+    /// Calico = queue left 340, Montara = queue right 340.
+    /// </summary>
+    private void ApplyLayoutType()
+    {
+        if (FilesPanel == null || PlayerSideColumn == null || PlayerContentColumn == null ||
+            PlayerContentGrid == null) return;
+        bool right = string.Equals(_settings.LayoutType, "Mavericks", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_settings.LayoutType, "Montara", StringComparison.OrdinalIgnoreCase);
+        bool wide = string.Equals(_settings.LayoutType, "Calico", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(_settings.LayoutType, "Montara", StringComparison.OrdinalIgnoreCase);
+        double sideWidth = wide ? 340 : 230;
+
+        if (right)
+        {
+            PlayerSideColumn.Width = new GridLength(1, GridUnitType.Star);
+            PlayerContentColumn.Width = new GridLength(sideWidth);
+        }
+        else
+        {
+            PlayerSideColumn.Width = new GridLength(sideWidth);
+            PlayerContentColumn.Width = new GridLength(1, GridUnitType.Star);
+        }
+        Grid.SetColumn(FilesPanel, right ? 1 : 0);
+        Grid.SetColumn(PlayerContentGrid, right ? 0 : 1);
+        // Keep the gutter on the inner edge of the queue panel.
+        FilesPanel.Margin = new Thickness(right ? 6 : 0, 0, right ? 0 : 6, 6);
+    }
+
+    private bool _seekInline;
+
+    /// <summary>
+    /// Comfy = full two-row transport; Compact = slim (no artwork, smaller
+    /// buttons); CompactInline = one row with the seek slider merged in.
+    /// </summary>
+    private void ApplyPlayerType()
+    {
+        if (SeekRow == null || TransportButtonsPanel == null || TransportInfoPanel == null ||
+            TransportArtwork == null || TransportVolumePanel == null || SeekSlider == null) return;
+        string mode = _settings.PlayerType; // normalized: Comfy, Compact, CompactInline
+
+        // Restore the seek slider to its home row first (idempotent).
+        if (_seekInline)
+        {
+            TransportButtonsPanel.Children.Remove(SeekSlider);
+            SeekRow.Children.Add(SeekSlider);
+            Grid.SetColumn(SeekSlider, 1);
+            SeekSlider.Width = double.NaN;
+            _seekInline = false;
+        }
+
+        bool slim = !string.Equals(mode, "Comfy", StringComparison.OrdinalIgnoreCase);
+        bool inlineSeek = string.Equals(mode, "CompactInline", StringComparison.OrdinalIgnoreCase);
+
+        TransportArtwork.Visibility = slim ? Visibility.Collapsed : Visibility.Visible;
+        TransportInfoPanel.Visibility = inlineSeek ? Visibility.Collapsed : Visibility.Visible;
+        SeekRow.Visibility = inlineSeek ? Visibility.Collapsed : Visibility.Visible;
+
+        double small = slim ? 36 : 40;
+        SetRoundButton(ShuffleButton, small);
+        SetRoundButton(PrevButton, small);
+        SetRoundButton(StopButton, small);
+        SetRoundButton(NextButton, small);
+        SetRoundButton(RepeatButton, small);
+        if (AutoMixButton != null) SetRoundButton(AutoMixButton, small);
+        PlayButton.Width = slim ? 44 : 52;
+        PlayButton.Height = slim ? 44 : 52;
+        PlayButton.CornerRadius = new CornerRadius(slim ? 22 : 26);
+        VolumeSlider.Width = slim ? 80 : 110;
+
+        if (inlineSeek)
+        {
+            SeekRow.Children.Remove(SeekSlider);
+            SeekSlider.Width = 170;
+            // Park it after the main transport buttons (before the AutoMix cluster).
+            int at = Math.Min(6, TransportButtonsPanel.Children.Count);
+            TransportButtonsPanel.Children.Insert(at, SeekSlider);
+            _seekInline = true;
+        }
+    }
+
+    private static void SetRoundButton(Button button, double size)
+    {
+        if (button == null) return;
+        button.Width = size;
+        button.Height = size;
+        button.CornerRadius = new CornerRadius(size / 2);
     }
 
     // ---------- File ----------
@@ -881,10 +1812,14 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnEnginePlaybackEnded(object? sender, EventArgs e) =>
-        DispatcherQueue.TryEnqueue(async () => await OnTrackEndedAsync());
+        DispatcherQueue.TryEnqueue(async () => await OnTrackEndedAsync(sender));
 
-    private async Task OnTrackEndedAsync()
+    private async Task OnTrackEndedAsync(object? sender = null)
     {
+        // Discard stale events from old/disposed engines or recent transitions
+        if (sender is AudioEngine eng && eng != _engine && eng != _mixNext) return;
+        if ((DateTime.UtcNow - _lastMixFinishedTime).TotalSeconds < 0.8) return;
+
         // AutoMix crossfade in progress: the outgoing engine ended — finish the swap.
         if (_mixNext != null)
         {
@@ -916,10 +1851,10 @@ public sealed partial class MainWindow : Window
             FileListView.SelectedIndex = next; // SelectionChanged auto-plays
     }
 
-    // ---------- AutoMix (Beta, Canary builds only) ----------
+    // ---------- AutoMix (Spotify-style customizable transitions) ----------
 
-    /// <summary>AutoMix is a Canary-only Beta: hidden on Stable/Beta builds.</summary>
-    private bool IsAutoMixAvailable() => IsCanaryBuild();
+    /// <summary>AutoMix is available to customize across all tracks.</summary>
+    private bool IsAutoMixAvailable() => true;
 
     private bool IsAutoMixOn() =>
         IsAutoMixAvailable() && _settings.AutoMixEnabled;
@@ -931,7 +1866,7 @@ public sealed partial class MainWindow : Window
     private bool CanAutoMixNow()
     {
         if (!IsAutoMixOn()) return false;
-        if (_mixNext != null || _mixStarting) return false;
+        if (_mixNext != null || _mixStarting || _isFinishingMix) return false;
         if (!_engine.IsLoaded || !_engine.IsPlaying || _engine.Reverse) return false;
         if (_engine.LoopEnabled) return false;
         if (_repeatMode == RepeatOne) return false;
@@ -942,7 +1877,7 @@ public sealed partial class MainWindow : Window
         if (next < 0 || next >= _tracks.Count) return false;
         if (!File.Exists(_tracks[next].Path)) return false;
         double remaining = _engine.EffectiveRemainingSeconds;
-        if (remaining <= 0.15 || remaining > AutoMixRequestedSeconds()) return false;
+        if (remaining <= 0.15 || remaining > AutoMixRequestedSeconds() + 0.1) return false;
         // Outgoing track must be longer than a blip, incoming must exist.
         if (_engine.SourceDuration.TotalSeconds < 3) return false;
         return true;
@@ -959,77 +1894,269 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Starts the tempo-matched crossfade: preloads the next track on a second
-    /// engine (same tempo/pitch/EQ/volume) and fades it in while fading the
-    /// current track out with an equal-power curve.
+    /// Warms the incoming track's head beat grid ahead of the crossfade so
+    /// grid analysis doesn't eat into the fade: once per track pair, while
+    /// the trigger is still up to 20 s away.
+    /// </summary>
+    private void MaybePrewarmAutoMix()
+    {
+        if (!IsAutoMixOn()) return;
+        if (_mixNext != null || _mixStarting || _isFinishingMix) return;
+        if (!_engine.IsLoaded || !_engine.IsPlaying || _engine.Reverse) return;
+        if (_engine.LoopEnabled) return;
+        if (_repeatMode == RepeatOne) return;
+        if (_tracks.Count < 2) return;
+        double requested = AutoMixRequestedSeconds();
+        double remaining = _engine.EffectiveRemainingSeconds;
+        if (remaining <= requested || remaining > requested + 20) return;
+        int current;
+        try { current = FileListView.SelectedIndex; } catch { return; }
+        int next = PickNextIndex(current, wrap: _repeatMode == RepeatAll);
+        if (next < 0 || next >= _tracks.Count) return;
+        string key = (_engine.FilePath ?? "") + "->" + _tracks[next].Path;
+        if (key == _mixPrewarmedKey) return;
+        _mixPrewarmedKey = key;
+        string warmNext = _tracks[next].Path;
+        string? warmOut = _engine.FilePath;
+        _ = Task.Run(() =>
+        {
+            if (_settings.AutoMixBeatSync)
+            {
+                if (!string.IsNullOrEmpty(warmOut))
+                    BeatGridCache.Precompute(warmOut, BeatGridWindow.Tail);
+                BeatGridCache.Precompute(warmNext, BeatGridWindow.Head);
+            }
+            else if (_settings.AutoMixSkipSilence)
+            {
+                BeatGridCache.Precompute(warmNext, BeatGridWindow.Head);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Starts the Spotify-style crossfade: preloads the next track on a second
+    /// engine and transitions according to the selected style (Bass Swap, Equal Power
+    /// Blend, Rise, Beat Drop, or Linear). When Beat-Sync is enabled and both tracks
+    /// have a reliable beat grid, tempo and downbeats are matched during the blend.
     /// </summary>
     private async Task StartAutoMixAsync(int nextIndex)
     {
-        if (_mixNext != null || _mixStarting) return;
+        if (_mixNext != null || _mixStarting || _isFinishingMix) return;
         if (nextIndex < 0 || nextIndex >= _tracks.Count) return;
         var item = _tracks[nextIndex];
         if (!File.Exists(item.Path)) return;
+
+        int sessionId = ++_mixSessionId;
         _mixStarting = true;
         try
         {
-            double tempo = Math.Clamp(TempoSlider.Value / 100.0, 0.25, 3.0);            double pitch = Math.Clamp(PitchSlider.Value, -12.0, 12.0);
+            double userTempo = Math.Clamp(TempoSlider.Value / 100.0, 0.25, 3.0);
+            double pitch = Math.Clamp(PitchSlider.Value, -12.0, 12.0);
             float volume = (float)Math.Clamp(VolumeSlider.Value / 100.0, 0, 1);
             var fx = _engine.SnapshotEffects();
+            string? outPath = _engine.FilePath;
+            string inPath = item.Path;
             var incoming = new AudioEngine();
-            bool loaded = await Task.Run(() =>
+
+            var loadTask = Task.Run(() =>
             {
                 try
                 {
                     incoming.ReplaceEffects(fx);
-                    incoming.Load(item.Path);
-                    incoming.Tempo = tempo;
+                    incoming.Load(inPath);
+                    incoming.Tempo = userTempo;
                     incoming.PitchSemitones = pitch;
                     incoming.Volume = volume;
                     incoming.MixGain = 0f;
+                    incoming.MixHighPassCutoff = 20f;
                     return true;
                 }
                 catch { return false; }
             });
-            if (!loaded || !_engine.IsPlaying)
+
+            Task<BeatGrid?> outGridTask = _settings.AutoMixBeatSync
+                ? Task.Run(() => (BeatGrid?)BeatGridCache.GetOrAnalyze(outPath, BeatGridWindow.Tail))
+                : Task.FromResult<BeatGrid?>(null);
+
+            Task<BeatGrid?> inGridTask = (_settings.AutoMixBeatSync || _settings.AutoMixSkipSilence)
+                ? Task.Run(() => (BeatGrid?)BeatGridCache.GetOrAnalyze(inPath, BeatGridWindow.Head))
+                : Task.FromResult<BeatGrid?>(null);
+
+            bool loaded = await loadTask;
+            if (!loaded || sessionId != _mixSessionId || !_engine.IsPlaying || !_engine.IsLoaded)
             {
-                try { incoming.Dispose(); } catch { /* ignore */ }
+                try { incoming.Dispose(); } catch { }
                 return;
             }
-            // Effective length: never longer than the time left on the outgoing
-            // track (wall-clock), so short endings still resolve cleanly.
+
+            BeatGrid? outGrid = null;
+            BeatGrid? inGrid = null;
+            try
+            {
+                outGrid = await outGridTask;
+                inGrid = await inGridTask;
+            }
+            catch { }
+
+            if (sessionId != _mixSessionId || !_engine.IsPlaying || !_engine.IsLoaded)
+            {
+                try { incoming.Dispose(); } catch { }
+                return;
+            }
+
             double remaining = _engine.EffectiveRemainingSeconds;
-            _mixDuration = Math.Clamp(Math.Min(AutoMixRequestedSeconds(), Math.Max(0.8, remaining)), 0.8, 12);
-            _mixElapsed = 0;
+            double requested = AutoMixRequestedSeconds();
+            BeatSyncPlan? plan = null;
+
+            if (_settings.AutoMixBeatSync && outGrid != null && inGrid != null)
+            {
+                try
+                {
+                    plan = BeatSyncPlan.TryPlan(
+                        outGrid, inGrid,
+                        _engine.SourcePosition.TotalSeconds, userTempo,
+                        requested, remaining,
+                        incoming.SourceDuration.TotalSeconds);
+                }
+                catch { }
+            }
+
+            if (plan != null)
+            {
+                incoming.Tempo = Math.Clamp(userTempo * plan.TempoRatio, 0.25, 3.0);
+                try { incoming.SourcePosition = TimeSpan.FromSeconds(plan.IncomingStartSeconds); }
+                catch { }
+                _mixDuration = Math.Clamp(plan.DurationSeconds, 0.8, Math.Max(0.8, remaining));
+                _mixTempoRatio = plan.TempoRatio;
+                _mixBeatInfo = plan.Info;
+            }
+            else
+            {
+                _mixDuration = Math.Clamp(Math.Min(requested, Math.Max(0.8, remaining)), 0.8, 12.0);
+                _mixTempoRatio = 1.0;
+                _mixBeatInfo = null;
+
+                if (_settings.AutoMixSkipSilence && inGrid != null && inGrid.FirstSoundSeconds > 0.05)
+                {
+                    double startSec = Math.Min(inGrid.FirstSoundSeconds, Math.Max(0, incoming.SourceDuration.TotalSeconds - 1.0));
+                    try { incoming.SourcePosition = TimeSpan.FromSeconds(startSec); } catch { }
+                }
+            }
+
+            ApplyMixGains(0.0, _settings.AutoMixStyle, _engine, incoming);
+
             _mixNextIndex = nextIndex;
             incoming.PlaybackEnded += OnEnginePlaybackEnded;
             incoming.Play();
+            _mixStopwatch.Restart();
             _mixNext = incoming;
-            StatusLabel.Text = $"AutoMix (Beta) → {item.Name}";
+
+            string styleName = FormatStyleName(_settings.AutoMixStyle);
+            StatusLabel.Text = _mixBeatInfo != null
+                ? $"AutoMix ({styleName}) → {item.Name} · {_mixBeatInfo}"
+                : $"AutoMix ({styleName}) → {item.Name}";
             UpdateNextUp();
         }
-        catch { /* crossfade start is best-effort */ }
+        catch { }
         finally { _mixStarting = false; }
     }
 
-    /// <summary>Ramps both engines along an equal-power curve; called each 100 ms tick.</summary>
+    /// <summary>Ramps gain and EQ filters along the selected transition style curve.</summary>
     private void UpdateAutoMixFade()
     {
         var incoming = _mixNext;
-        if (incoming == null) return;
-        _mixElapsed += 0.1;
-        double t = Math.Clamp(_mixElapsed / Math.Max(0.4, _mixDuration), 0, 1);
-        // Equal-power crossfade (constant loudness through the middle).
-        float outGain = (float)Math.Cos(t * Math.PI / 2.0);
-        float inGain = (float)Math.Sin(t * Math.PI / 2.0);
+        if (incoming == null || _isFinishingMix) return;
+
+        double elapsed = _mixStopwatch.Elapsed.TotalSeconds;
+        double dur = Math.Max(0.4, _mixDuration);
+        double t = Math.Clamp(elapsed / dur, 0.0, 1.0);
+
+        ApplyMixGains(t, _settings.AutoMixStyle, _engine, incoming);
+
+        // Smooth tempo restoration during the second half of the transition:
+        if (Math.Abs(_mixTempoRatio - 1.0) > 0.001 && t > 0.5)
+        {
+            double blend = (t - 0.5) / 0.5; // 0 to 1
+            double userTempo = TempoSlider.Value / 100.0;
+            double currentRatio = _mixTempoRatio * (1.0 - blend) + 1.0 * blend;
+            try { incoming.Tempo = Math.Clamp(userTempo * currentRatio, 0.25, 3.0); } catch { }
+        }
+
         try
         {
-            _engine.MixGain = outGain;
-            incoming.MixGain = inGain;
             incoming.Update();
         }
-        catch { /* gains are best-effort */ }
-        if (t >= 1 || _engine.EffectiveRemainingSeconds <= 0.05)
+        catch { }
+
+        if (t >= 1.0 || _engine.EffectiveRemainingSeconds <= 0.04)
+        {
             _ = FinishAutoMixAsync();
+        }
+    }
+
+    private static void ApplyMixGains(double t, string? style, AudioEngine outgoing, AudioEngine incoming)
+    {
+        style = AppSettings.NormalizeAutoMixStyle(style);
+        try
+        {
+            switch (style)
+            {
+                case "Blend":
+                    outgoing.MixGain = (float)Math.Cos(t * Math.PI / 2.0);
+                    incoming.MixGain = (float)Math.Sin(t * Math.PI / 2.0);
+                    outgoing.MixHighPassCutoff = 20f;
+                    incoming.MixHighPassCutoff = 20f;
+                    break;
+
+                case "BassSwap":
+                    outgoing.MixGain = (float)Math.Cos(t * Math.PI / 2.0);
+                    incoming.MixGain = (float)Math.Sin(t * Math.PI / 2.0);
+                    if (t < 0.5)
+                    {
+                        outgoing.MixHighPassCutoff = 20f;
+                        incoming.MixHighPassCutoff = 260f; // Bass cut on incoming
+                    }
+                    else
+                    {
+                        outgoing.MixHighPassCutoff = 260f; // Bass cut on outgoing
+                        incoming.MixHighPassCutoff = 20f;  // Bass full on incoming
+                    }
+                    break;
+
+                case "Rise":
+                    outgoing.MixGain = (float)Math.Cos(t * Math.PI / 2.0);
+                    incoming.MixGain = (float)Math.Sin(t * Math.PI / 2.0);
+                    float sweep = (float)(20.0 * Math.Pow(1800.0 / 20.0, t));
+                    outgoing.MixHighPassCutoff = Math.Clamp(sweep, 20f, 2000f);
+                    incoming.MixHighPassCutoff = 20f;
+                    break;
+
+                case "BeatDrop":
+                    if (t < 0.88)
+                    {
+                        outgoing.MixGain = 1.0f;
+                        incoming.MixGain = 0.0f;
+                    }
+                    else
+                    {
+                        double subT = (t - 0.88) / 0.12;
+                        outgoing.MixGain = (float)(1.0 - subT);
+                        incoming.MixGain = (float)subT;
+                    }
+                    outgoing.MixHighPassCutoff = 20f;
+                    incoming.MixHighPassCutoff = 20f;
+                    break;
+
+                case "Linear":
+                default:
+                    outgoing.MixGain = (float)(1.0 - t);
+                    incoming.MixGain = (float)t;
+                    outgoing.MixHighPassCutoff = 20f;
+                    incoming.MixHighPassCutoff = 20f;
+                    break;
+            }
+        }
+        catch { }
     }
 
     /// <summary>
@@ -1038,19 +2165,38 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task FinishAutoMixAsync()
     {
+        if (_isFinishingMix) return;
+        _isFinishingMix = true;
+
         var incoming = _mixNext;
-        if (incoming == null) return;
+        if (incoming == null)
+        {
+            _isFinishingMix = false;
+            return;
+        }
+
         _mixNext = null;
+        _mixStopwatch.Stop();
+        _mixTempoRatio = 1.0;
+        _mixBeatInfo = null;
         int finishedIndex = _mixNextIndex;
         _mixNextIndex = -1;
+
         AudioEngine old = _engine;
-        try { old.PlaybackEnded -= OnEnginePlaybackEnded; } catch { /* ignore */ }
+        try { old.PlaybackEnded -= OnEnginePlaybackEnded; } catch { }
         _engine = incoming;
-        try { _engine.PlaybackEnded -= OnEnginePlaybackEnded; } catch { /* ignore */ }
+        try { _engine.PlaybackEnded -= OnEnginePlaybackEnded; } catch { }
         _engine.PlaybackEnded += OnEnginePlaybackEnded;
+
         _engine.MixGain = 1f;
-        try { old.Stop(); } catch { /* ignore */ }
-        try { old.Dispose(); } catch { /* ignore */ }
+        _engine.MixHighPassCutoff = 20f;
+        // Restore user's selected tempo slider on the engine
+        try { _engine.Tempo = TempoSlider.Value / 100.0; } catch { }
+
+        try { old.Stop(); } catch { }
+        try { old.Dispose(); } catch { }
+
+        _lastMixFinishedTime = DateTime.UtcNow;
 
         // Move the queue selection without re-loading (engine already playing).
         _playlistSync = true;
@@ -1072,8 +2218,17 @@ public sealed partial class MainWindow : Window
         UpdateReverseUi();
         UpdatePlaylistUi();
         UpdateNextUp();
+        UpdateAutoMixUi();
         await RefreshSmtcForTrackAsync();
         RefreshSmtcPlayback();
+
+        // Warm the beat-grid cache for the newly promoted track.
+        string? promotedPath = _engine.FilePath;
+        if (!string.IsNullOrEmpty(promotedPath))
+        {
+            string warmPromoted = promotedPath;
+            _ = Task.Run(() => BeatGridCache.Precompute(warmPromoted, BeatGridWindow.Tail));
+        }
 
         // Waveform for the new track (best-effort, ignore if user moved on).
         try
@@ -1088,23 +2243,34 @@ public sealed partial class MainWindow : Window
                     Waveform.Data = data;
             }
         }
-        catch { /* waveform is optional */ }
+        catch { }
+
+        _isFinishingMix = false;
     }
 
     /// <summary>Aborts an in-progress crossfade (user seek/pause/nav/loop/reverse).</summary>
     private void CancelAutoMix()
     {
+        _mixSessionId++;
+        _mixStarting = false;
+        _mixStopwatch.Stop();
         var incoming = _mixNext;
         _mixNext = null;
         _mixNextIndex = -1;
-        _mixElapsed = 0;
+        _mixTempoRatio = 1.0;
+        _mixBeatInfo = null;
         if (incoming != null)
         {
-            try { incoming.PlaybackEnded -= OnEnginePlaybackEnded; } catch { /* ignore */ }
-            try { incoming.Stop(); } catch { /* ignore */ }
-            try { incoming.Dispose(); } catch { /* ignore */ }
+            try { incoming.PlaybackEnded -= OnEnginePlaybackEnded; } catch { }
+            try { incoming.Stop(); } catch { }
+            try { incoming.Dispose(); } catch { }
         }
-        try { _engine.MixGain = 1f; } catch { /* ignore */ }
+        try
+        {
+            _engine.MixGain = 1f;
+            _engine.MixHighPassCutoff = 20f;
+        }
+        catch { }
     }
 
     private void AutoMixButton_Click(object sender, RoutedEventArgs e)
@@ -1118,6 +2284,113 @@ public sealed partial class MainWindow : Window
         UpdateNextUp();
     }
 
+    private void AutoMixButton_RightTapped(object sender, RightTappedRoutedEventArgs e) =>
+        ShowAutoMixDialog();
+
+    private void AutoMixSettingsButton_Click(object sender, RoutedEventArgs e) =>
+        ShowAutoMixDialog();
+
+    /// <summary>Opens the Spotify-style AutoMix mixer popup.</summary>
+    private async void ShowAutoMixDialog()
+    {
+        if (!IsAutoMixAvailable()) return;
+        var dlg = new AutoMixDialog(this, _settings) { XamlRoot = Content.XamlRoot };
+        await dlg.ShowAsync();
+    }
+
+    /// <summary>Current + next queue tracks for the mixer popup (null when no pair).</summary>
+    internal bool TryGetAutoMixPair(out TrackItem? current, out TrackItem? next)
+    {
+        current = null;
+        next = null;
+        try
+        {
+            if (_tracks.Count < 2) return false;
+            int cur = FileListView.SelectedIndex;
+            if (cur < 0 || cur >= _tracks.Count) return false;
+            int nxt = PickNextIndex(cur, wrap: _repeatMode == RepeatAll);
+            if (nxt < 0 || nxt >= _tracks.Count) return false;
+            current = _tracks[cur];
+            next = _tracks[nxt];
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Starts the transition immediately (mixer preview button).</summary>
+    internal async Task<(bool Started, string Message)> PreviewAutoMixAsync()
+    {
+        if (!IsAutoMixAvailable()) return (false, "AutoMix isn't available on this build.");
+        if (!IsAutoMixOn()) return (false, "Turn AutoMix on first.");
+        if (_mixNext != null || _mixStarting) return (false, "A transition is already running.");
+        if (!_engine.IsLoaded || !_engine.IsPlaying) return (false, "Play a track first.");
+        if (_engine.LoopEnabled || _engine.Reverse || _repeatMode == RepeatOne)
+            return (false, "Turn off loop / reverse / repeat-one first.");
+        int nextIndex = -1;
+        try
+        {
+            int cur = FileListView.SelectedIndex;
+            if (cur < 0 || cur >= _tracks.Count) return (false, "No next track in the queue.");
+            nextIndex = PickNextIndex(cur, wrap: _repeatMode == RepeatAll);
+        }
+        catch { return (false, "No next track in the queue."); }
+        if (nextIndex < 0 || nextIndex >= _tracks.Count) return (false, "No next track in the queue.");
+        await StartAutoMixAsync(nextIndex);
+        return (true, "Mixing…");
+    }
+
+    /// <summary>Refreshes transport labels after the mixer edits settings.</summary>
+    internal void RefreshAutoMixUi()
+    {
+        UpdateAutoMixUi();
+        UpdateNextUp();
+    }
+
+    /// <summary>Wall-clock seconds for a bar-count fade on the current track (null when BPM unknown).</summary>
+    internal double? BarsToSeconds(int bars)
+    {
+        if (bars < 1 || bars > 16) return null;
+        try
+        {
+            string? path = _engine.FilePath;
+            if (string.IsNullOrEmpty(path) || !_engine.IsLoaded) return null;
+            double tempo = TempoSlider.Value / 100.0;
+            if (tempo <= 0) return null;
+            var grid = BeatGridCache.GetOrAnalyze(path, BeatGridWindow.Tail);
+            if (grid == null || !grid.IsReliable) return null;
+            double barWall = grid.BeatsPerBar * grid.BeatIntervalSeconds / tempo;
+            if (barWall <= 0) return null;
+            return Math.Clamp(bars * barWall, 1, 12);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Nearest offered bar count (1/2/4/8) for a seconds value (null when BPM unknown).</summary>
+    internal int? SecondsToBars(double seconds)
+    {
+        try
+        {
+            string? path = _engine.FilePath;
+            if (string.IsNullOrEmpty(path) || !_engine.IsLoaded) return null;
+            double tempo = TempoSlider.Value / 100.0;
+            if (tempo <= 0) return null;
+            var grid = BeatGridCache.GetOrAnalyze(path, BeatGridWindow.Tail);
+            if (grid == null || !grid.IsReliable) return null;
+            double barWall = grid.BeatsPerBar * grid.BeatIntervalSeconds / tempo;
+            if (barWall <= 0) return null;
+            double exact = seconds / barWall;
+            int best = 1;
+            double bestErr = double.MaxValue;
+            foreach (int b in new[] { 1, 2, 4, 8 })
+            {
+                double err = Math.Abs(exact - b);
+                if (err < bestErr) { bestErr = err; best = b; }
+            }
+            return best;
+        }
+        catch { return null; }
+    }
+
     private void AutoMixSeconds_Changed(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (!IsAutoMixAvailable()) return;
@@ -1127,16 +2400,27 @@ public sealed partial class MainWindow : Window
         UpdateNextUp();
     }
 
+    private static string FormatStyleName(string? style) =>
+        AppSettings.NormalizeAutoMixStyle(style) switch
+        {
+            "Blend" => "Equal Power Blend",
+            "Rise" => "Rise / High-Pass",
+            "BeatDrop" => "Beat Drop",
+            "Linear" => "Linear",
+            _ => "Bass Swap",
+        };
+
     private void UpdateAutoMixUi()
     {
         bool available = IsAutoMixAvailable();
+        string styleName = FormatStyleName(_settings.AutoMixStyle);
         if (AutoMixButton != null)
         {
             AutoMixButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
             AutoMixButton.Background = IsAutoMixOn() ? _reverseActiveBackground : _autoMixIdleBackground;
             ToolTipService.SetToolTip(AutoMixButton, IsAutoMixOn()
-                ? $"AutoMix (Beta) on — tempo-matched crossfade over {AutoMixRequestedSeconds():0.#}s (click to turn off)"
-                : "AutoMix (Beta) off — DJ-style tempo-matched crossfade (Canary only, click to turn on)");
+                ? $"AutoMix on — {styleName} ({AutoMixRequestedSeconds():0.#}s) · Click to turn off, gear opens the mixer"
+                : $"AutoMix off — {styleName} ({AutoMixRequestedSeconds():0.#}s) · Click to turn on, gear opens the mixer");
         }
         if (AutoMixIcon != null)
             AutoMixIcon.Foreground = IsAutoMixOn()
@@ -1154,7 +2438,7 @@ public sealed partial class MainWindow : Window
         if (AutoMixDurationLabel != null)
         {
             AutoMixDurationLabel.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
-            AutoMixDurationLabel.Text = $"{AutoMixRequestedSeconds():0.#}s Beta";
+            AutoMixDurationLabel.Text = $"{AutoMixRequestedSeconds():0.#}s";
         }
         if (AutoMixBetaBadge != null)
             AutoMixBetaBadge.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
@@ -1163,9 +2447,12 @@ public sealed partial class MainWindow : Window
     private void UpdateNextUp()
     {
         if (NextUpLabel == null) return;
+        string styleName = FormatStyleName(_settings.AutoMixStyle);
         if (_mixNext != null && _mixNextIndex >= 0 && _mixNextIndex < _tracks.Count)
         {
-            NextUpLabel.Text = $"🎧 AutoMix (Beta) → {_tracks[_mixNextIndex].Name}";
+            NextUpLabel.Text = _mixBeatInfo != null
+                ? $"🎧 AutoMix ({styleName}) → {_tracks[_mixNextIndex].Name} · {_mixBeatInfo}"
+                : $"🎧 AutoMix ({styleName}) → {_tracks[_mixNextIndex].Name}";
             return;
         }
         if (_tracks.Count == 0) { NextUpLabel.Text = ""; return; }
@@ -1185,11 +2472,11 @@ public sealed partial class MainWindow : Window
         int next = current + 1;
         if (next < _tracks.Count)
             NextUpLabel.Text = IsAutoMixOn() && _engine.IsLoaded && _repeatMode != RepeatOne
-                ? $"🎧 AutoMix in {AutoMixRequestedSeconds():0.#}s → {_tracks[next].Name}"
+                ? $"🎧 AutoMix in {AutoMixRequestedSeconds():0.#}s ({styleName}) → {_tracks[next].Name}"
                 : $"Playing Next: {_tracks[next].Name}";
         else if (_repeatMode == RepeatAll)
             NextUpLabel.Text = IsAutoMixOn() && _engine.IsLoaded
-                ? $"🎧 AutoMix in {AutoMixRequestedSeconds():0.#}s → {_tracks[0].Name} (repeat all)"
+                ? $"🎧 AutoMix in {AutoMixRequestedSeconds():0.#}s ({styleName}) → {_tracks[0].Name} (repeat all)"
                 : $"Playing Next: {_tracks[0].Name} (repeat all)";
         else
             NextUpLabel.Text = current >= 0 ? "End of files" : "";
@@ -1286,6 +2573,10 @@ public sealed partial class MainWindow : Window
             UpdateEffectiveLabel();
             UpdateReverseUi();
             await RefreshSmtcForTrackAsync();
+
+            // Warm the beat-grid cache so the tail grid is ready if AutoMix fires.
+            string warmPath = path;
+            _ = Task.Run(() => BeatGridCache.Precompute(warmPath, BeatGridWindow.Tail));
 
             // Build waveform in background
             string copy = path;
@@ -1415,14 +2706,22 @@ public sealed partial class MainWindow : Window
 
     private void RefreshPosition()
     {
-        if (!_engine.IsLoaded) return;
+        if (!_engine.IsLoaded)
+        {
+            try { _taskbar.Clear(WindowHandle); } catch { /* ignore */ }
+            return;
+        }
         _engine.Update();
 
-        // AutoMix (Beta, Canary only): start the crossfade on schedule, then ramp it.
+        // AutoMix (Beta, Canary only): pre-warm the next grid, then start the
+        // crossfade on schedule and ramp it.
         if (_mixNext != null)
             UpdateAutoMixFade();
         else
+        {
+            MaybePrewarmAutoMix();
             MaybeStartAutoMix();
+        }
 
         var pos = _engine.SourcePosition;
         var dur = _engine.SourceDuration;
@@ -1439,6 +2738,35 @@ public sealed partial class MainWindow : Window
         }
         finally { _updatingSeek = false; }
         RefreshSmtcTimeline();
+        RefreshTaskbarProgress();
+    }
+
+    /// <summary>
+    /// Mirrors song progress onto the taskbar button (Cider-style): green fill
+    /// while playing, yellow when paused, hidden when stopped. During an
+    /// AutoMix crossfade the incoming track is the one taking over, so it is
+    /// shown. A stopped engine sits at position 0, which clears the bar.
+    /// </summary>
+    private void RefreshTaskbarProgress()
+    {
+        try
+        {
+            var hwnd = WindowHandle;
+            if (hwnd == IntPtr.Zero || !_engine.IsLoaded)
+            {
+                _taskbar.Clear(hwnd);
+                return;
+            }
+            var active = _mixNext ?? _engine;
+            double progress = Math.Clamp(active.Progress, 0, 1);
+            if (!active.IsPlaying && progress <= 0.001)
+            {
+                _taskbar.Clear(hwnd);
+                return;
+            }
+            _taskbar.SetProgress(hwnd, progress, paused: !active.IsPlaying);
+        }
+        catch { /* taskbar is best-effort */ }
     }
 
     // ---------- Tempo / pitch ----------
@@ -1451,7 +2779,8 @@ public sealed partial class MainWindow : Window
         var incoming = _mixNext;
         if (incoming != null)
         {
-            try { incoming.Tempo = e.NewValue / 100.0; } catch { /* ignore */ }
+            // Preserve the beat-sync ratio so both tracks stay locked.
+            try { incoming.Tempo = e.NewValue / 100.0 * _mixTempoRatio; } catch { /* ignore */ }
         }
         UpdateEffectiveLabel();
         RefreshSmtcTimeline(force: true);
@@ -1571,18 +2900,43 @@ public sealed partial class MainWindow : Window
     {
         bool eq = view == "eq";
         bool insider = view == "insider";
+        bool settings = view == "settings";
         if (EqView == null || PlayerView == null || InsiderView == null) return;
+
+        // Hide the current sidebar (NavRail) and top toolbar when in Settings
+        if (NavRail != null)
+            NavRail.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+        if (TopToolbar != null)
+            TopToolbar.Visibility = settings ? Visibility.Collapsed : Visibility.Visible;
+
+        if (SettingsSearchBox != null)
+            SettingsSearchBox.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
+
+        if (AppTitleBarLeft != null && AppTitleBarFull != null)
+            SetTitleBar(settings ? AppTitleBarLeft : AppTitleBarFull);
+
+        if (SettingsView != null)
+            SettingsView.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
         EqView.Visibility = eq ? Visibility.Visible : Visibility.Collapsed;
         InsiderView.Visibility = insider ? Visibility.Visible : Visibility.Collapsed;
-        PlayerView.Visibility = (eq || insider) ? Visibility.Collapsed : Visibility.Visible;
+        PlayerView.Visibility = (!eq && !insider && !settings) ? Visibility.Visible : Visibility.Collapsed;
+
         if (NavPlayerButton != null)
-            NavPlayerButton.Background = (!eq && !insider) ? _reverseActiveBackground : _navIdleBackground;
+            NavPlayerButton.Background = (!eq && !insider && !settings) ? _reverseActiveBackground : _navIdleBackground;
         if (NavEqButton != null)
             NavEqButton.Background = eq ? _reverseActiveBackground : _navIdleBackground;
         if (NavInsiderButton != null)
             NavInsiderButton.Background = insider ? _reverseActiveBackground : _navIdleBackground;
+        if (NavSettingsButton != null)
+            NavSettingsButton.Background = settings ? _reverseActiveBackground : _navIdleBackground;
+
         if (insider)
             RefreshInsiderHubAsync();
+        if (settings)
+        {
+            SetSettingsSidebarExpanded(_settingsSidebarExpanded);
+            SyncSettingsViewFromModel();
+        }
     }
 
     // ---------- Effects chain (Equalizer APO style) ----------

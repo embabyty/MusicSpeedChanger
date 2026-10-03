@@ -5,120 +5,186 @@
     Title="Settings"
     PrimaryButtonText="Done"
     CloseButtonText="Cancel"
-    DefaultButton="Primary">
+    DefaultButton="Primary"
+    MaxWidth="820">
 
     <ContentDialog.Resources>
+        <x:Double x:Key="ContentDialogMaxWidth">820</x:Double>
+        <x:Double x:Key="ContentDialogMaxHeight">660</x:Double>
         <Style TargetType="TextBlock" x:Key="SectionHeader">
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="FontSize" Value="15" />
             <Setter Property="Margin" Value="0,12,0,4" />
         </Style>
+        <DataTemplate x:Key="NavItemTemplate">
+            <StackPanel Orientation="Horizontal" Spacing="10" Padding="0,7">
+                <FontIcon Glyph="{Binding Glyph}" FontFamily="Segoe MDL2 Assets" FontSize="15"
+                          VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Name}" FontSize="14" VerticalAlignment="Center" />
+            </StackPanel>
+        </DataTemplate>
     </ContentDialog.Resources>
 
-    <ScrollViewer MaxHeight="560">
-        <StackPanel MinWidth="420" Spacing="4">
-            <TextBlock x:Name="VersionLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+    <!-- Discord-style: nav rail on the left, category page on the right. -->
+    <Grid Width="780" MinHeight="520">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="190" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-            <!-- Updates -->
-            <TextBlock Text="Updates" Style="{StaticResource SectionHeader}" />
-            <ToggleSwitch x:Name="AutoCheckSwitch" Header="Automatically check for updates on startup" />
-            <TextBox x:Name="FeedUrlBox" Header="Update feed (GitHub Releases API or JSON {version, notes, url})" />
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                <Button x:Name="CheckNowButton" Content="Check now" Click="CheckNowButton_Click" />
-                <Button x:Name="InstallUpdateButton" Content="Download &amp; install" Visibility="Collapsed"
-                        Click="InstallUpdateButton_Click" Style="{ThemeResource AccentButtonStyle}" />
-            </StackPanel>
-            <TextBlock x:Name="UpdateStatusLabel" TextWrapping="Wrap"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
-            <!-- Supporter & beta (betas are Patreon-gated) -->
-            <TextBlock Text="Supporter &amp; beta" Style="{StaticResource SectionHeader}" />
-            <TextBlock Text="Beta builds are available to Patreon supporters. Log in to verify membership and unlock them."
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-            <CheckBox x:Name="BetaUpdatesBox" Content="Include beta updates" />
-            <ComboBox x:Name="InsiderChannelBox" Header="Insider Hub channel (beta builds, Patreon supporters)"
-                      Margin="0,4,0,0">
-                <x:String>Beta</x:String>
-                <x:String>Canary</x:String>
-            </ComboBox>
-            <TextBlock Text="Canary ships weekly from the canary branch; startup checks follow this channel."
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                <Button x:Name="PatreonLoginButton" Content="Login with Patreon" Click="PatreonLoginButton_Click"
-                        Style="{ThemeResource AccentButtonStyle}" />
-                <Button x:Name="PatreonUnlinkButton" Content="Unlink" Click="PatreonUnlinkButton_Click"
-                        Visibility="Collapsed" />
-                <Button x:Name="PatreonButton" Content="Open Patreon page" Click="PatreonButton_Click" />
-            </StackPanel>
-            <TextBlock x:Name="PatreonStatusLabel" TextWrapping="Wrap"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
-            <!-- Beta channel (Patreon-gated, installs side-by-side with this app) -->
-            <TextBlock Text="Beta channel" Style="{StaticResource SectionHeader}" />
-            <TextBlock Text="Switching verifies your Patreon membership, then installs the beta next to this app."
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                <Button x:Name="SwitchToBetaButton" Content="Switch to Beta" Click="SwitchToBetaButton_Click"
-                        Style="{ThemeResource AccentButtonStyle}" />
-            </StackPanel>
-            <TextBlock x:Name="BetaStatusLabel" TextWrapping="Wrap"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-
-            <!-- Speed & pitch -->
-            <TextBlock Text="Speed &amp; pitch" Style="{StaticResource SectionHeader}" />
-            <NumberBox x:Name="DefaultTempoBox" Header="Default tempo (%)"
-                       Minimum="25" Maximum="300" SpinButtonPlacementMode="Inline" />
-            <NumberBox x:Name="DefaultPitchBox" Header="Default pitch (semitones)"
-                       Minimum="-12" Maximum="12" SpinButtonPlacementMode="Inline" />
-            <CheckBox x:Name="ApplyDefaultsBox" Content="Reset to these defaults when a file is opened" />
-            <NumberBox x:Name="TempoStepBox" Header="Tempo slider step (%)"
-                       Minimum="0.5" Maximum="10" SpinButtonPlacementMode="Inline" />
-            <NumberBox x:Name="PitchStepBox" Header="Pitch slider step (semitones)"
-                       Minimum="0.1" Maximum="1" SpinButtonPlacementMode="Inline" />
-
-            <!-- Editor controls -->
-            <TextBlock Text="Editor controls" Style="{StaticResource SectionHeader}" />
-            <CheckBox x:Name="ShowTempoBox" Content="Show Tempo panel" />
-            <CheckBox x:Name="ShowPitchBox" Content="Show Pitch panel" />
-            <CheckBox x:Name="ShowLoopBox" Content="Show AB Loop panel" />
-            <CheckBox x:Name="ShowEqBox" Content="Show Equalizer panel" />
-            <NumberBox x:Name="WaveformPeaksBox" Header="Waveform detail (bars, applies to next file)"
-                       Minimum="100" Maximum="8000" SpinButtonPlacementMode="Inline" />
-            <CheckBox x:Name="ClickToSeekBox" Content="Click / drag the waveform to seek" />
-            <CheckBox x:Name="RememberListBox" Content="Remember the files between sessions" />
-
-            <!-- Effects -->
-            <TextBlock Text="Effects" Style="{StaticResource SectionHeader}" />
-            <CheckBox x:Name="RememberEffectsBox"
-                      Content="Save effects and restore them on startup (tempo, pitch, volume, EQ)" />
-            <TextBlock Text="When off, newly opened files use the defaults above instead."
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-
-            <!-- AutoMix (Beta, Canary builds only) -->
-            <TextBlock x:Name="AutoMixHeader" Text="AutoMix (Beta)" Style="{StaticResource SectionHeader}" />
-            <CheckBox x:Name="AutoMixEnabledBox" Content="AutoMix crossfade into the next track (Canary Beta)" />
-            <NumberBox x:Name="AutoMixSecondsBox" Header="Crossfade length (seconds, 1–12)"
-                       Minimum="1" Maximum="12" SpinButtonPlacementMode="Inline" />
-            <TextBlock x:Name="AutoMixHint" Text="DJ-style tempo-matched crossfade. Beat-grid snapping lands in a later Beta. Off when Repeat One, AB loop, or Reverse is on."
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-
-            <!-- Appearance -->
-            <TextBlock Text="Appearance" Style="{StaticResource SectionHeader}" />
-            <ToggleSwitch x:Name="UseAccentSwitch" Header="Match the Windows accent color"
-                          Toggled="UseAccentSwitch_Toggled" />
-            <TextBlock Text="Custom accent (when above is off)"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-            <ColorPicker x:Name="CustomAccentPicker"
-                          IsAlphaEnabled="False" IsHexInputVisible="True" />
-
-            <!-- About / owner -->
-            <TextBlock Text="About" Style="{StaticResource SectionHeader}" />
-            <TextBlock Text="Music Speed Changer by EmAppleFlagship (Patreon)."
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
-                <Button x:Name="EmailOwnerButton" Content="Email the owner" Click="EmailOwnerButton_Click" />
-            </StackPanel>
-            <TextBlock x:Name="OwnerEmailLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <!-- Left: search + category nav -->
+        <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,16,0">
+            <TextBox x:Name="SearchBox" PlaceholderText="Search" Margin="0,0,0,4"
+                     TextChanged="SearchBox_TextChanged" />
+            <ListView x:Name="NavList" ItemTemplate="{StaticResource NavItemTemplate}"
+                      SelectionChanged="NavList_SelectionChanged" />
         </StackPanel>
-    </ScrollViewer>
+
+        <!-- Right: category title + page -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="CategoryTitle" Text="About" FontSize="20" FontWeight="SemiBold"
+                       Margin="0,0,0,8" />
+            <ScrollViewer Grid.Row="1" MaxHeight="520" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="6" Margin="0,0,12,0">
+
+                    <!-- ==================== ABOUT ==================== -->
+                    <StackPanel x:Name="AboutPanel" Spacing="4">
+                        <TextBlock x:Name="VersionLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                        <!-- Updates -->
+                        <TextBlock Text="Updates" Style="{StaticResource SectionHeader}" />
+                        <ToggleSwitch x:Name="AutoCheckSwitch" Header="Automatically check for updates on startup" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                            <Button x:Name="CheckNowButton" Content="Check now" Click="CheckNowButton_Click" />
+                            <Button x:Name="InstallUpdateButton" Content="Download &amp; install" Visibility="Collapsed"
+                                    Click="InstallUpdateButton_Click" Style="{ThemeResource AccentButtonStyle}" />
+                        </StackPanel>
+                        <TextBlock x:Name="UpdateStatusLabel" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                        <!-- Update feed -->
+                        <TextBlock Text="Update feed" Style="{StaticResource SectionHeader}" />
+                        <TextBox x:Name="FeedUrlBox" Header="Update feed (GitHub Releases API or JSON {version, notes, url})" />
+
+                        <!-- Supporter & beta (betas are Patreon-gated) -->
+                        <TextBlock Text="Supporter &amp; beta" Style="{StaticResource SectionHeader}" />
+                        <TextBlock Text="Beta builds are available to Patreon supporters. Log in to verify membership and unlock them."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <CheckBox x:Name="BetaUpdatesBox" Content="Include beta updates" />
+                        <ComboBox x:Name="InsiderChannelBox" Header="Insider Hub channel (beta builds, Patreon supporters)"
+                                  Margin="0,4,0,0">
+                            <x:String>Beta</x:String>
+                            <x:String>Canary</x:String>
+                        </ComboBox>
+                        <TextBlock Text="Canary ships weekly from the canary branch; startup checks follow this channel."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                            <Button x:Name="PatreonLoginButton" Content="Login with Patreon" Click="PatreonLoginButton_Click"
+                                    Style="{ThemeResource AccentButtonStyle}" />
+                            <Button x:Name="PatreonUnlinkButton" Content="Unlink" Click="PatreonUnlinkButton_Click"
+                                    Visibility="Collapsed" />
+                            <Button x:Name="PatreonButton" Content="Open Patreon page" Click="PatreonButton_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="PatreonStatusLabel" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                        <!-- Beta channel (Patreon-gated, installs side-by-side with this app) -->
+                        <TextBlock Text="Beta channel" Style="{StaticResource SectionHeader}" />
+                        <TextBlock Text="Switching verifies your Patreon membership, then installs the beta next to this app."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                            <Button x:Name="SwitchToBetaButton" Content="Switch to Beta" Click="SwitchToBetaButton_Click"
+                                    Style="{ThemeResource AccentButtonStyle}" />
+                        </StackPanel>
+                        <TextBlock x:Name="BetaStatusLabel" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                        <!-- About / owner -->
+                        <TextBlock Text="Music Speed Changer by EmAppleFlagship (Patreon)."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                            <Button x:Name="EmailOwnerButton" Content="Email the owner" Click="EmailOwnerButton_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="OwnerEmailLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+
+                    <!-- ==================== AUDIO ==================== -->
+                    <StackPanel x:Name="AudioPanel" Spacing="4" Visibility="Collapsed">
+                        <!-- Speed & pitch -->
+                        <TextBlock Text="Speed &amp; pitch" Style="{StaticResource SectionHeader}" />
+                        <NumberBox x:Name="DefaultTempoBox" Header="Default tempo (%)"
+                                   Minimum="25" Maximum="300" SpinButtonPlacementMode="Inline" />
+                        <NumberBox x:Name="DefaultPitchBox" Header="Default pitch (semitones)"
+                                   Minimum="-12" Maximum="12" SpinButtonPlacementMode="Inline" />
+                        <CheckBox x:Name="ApplyDefaultsBox" Content="Reset to these defaults when a file is opened" />
+                        <NumberBox x:Name="TempoStepBox" Header="Tempo slider step (%)"
+                                   Minimum="0.5" Maximum="10" SpinButtonPlacementMode="Inline" />
+                        <NumberBox x:Name="PitchStepBox" Header="Pitch slider step (semitones)"
+                                   Minimum="0.1" Maximum="1" SpinButtonPlacementMode="Inline" />
+
+                        <!-- Effects -->
+                        <TextBlock Text="Effects" Style="{StaticResource SectionHeader}" />
+                        <CheckBox x:Name="RememberEffectsBox"
+                                  Content="Save effects and restore them on startup (tempo, pitch, volume, EQ)" />
+                        <TextBlock Text="When off, newly opened files use the defaults above instead."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+                        <!-- AutoMix & Transitions (Spotify style) -->
+                        <TextBlock x:Name="AutoMixHeader" Text="AutoMix &amp; Transitions" Style="{StaticResource SectionHeader}" />
+                        <CheckBox x:Name="AutoMixEnabledBox" Content="Enable AutoMix transitions between songs" />
+                        <NumberBox x:Name="AutoMixSecondsBox" Header="Crossfade length (seconds, 1–12)"
+                                   Minimum="1" Maximum="12" SpinButtonPlacementMode="Inline" />
+                        <TextBlock x:Name="AutoMixHint" Text="Transition styles, bars, Beat-Sync and preview live in the AutoMix mixer — click the gear next to the MIX button in the player. Inactive when Repeat One, AB loop, or Reverse is on."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <!-- ==================== APPEARANCE ==================== -->
+                    <StackPanel x:Name="AppearancePanel" Spacing="4" Visibility="Collapsed">
+                        <!-- Editor controls -->
+                        <TextBlock Text="Editor controls" Style="{StaticResource SectionHeader}" />
+                        <CheckBox x:Name="ShowTempoBox" Content="Show Tempo panel" />
+                        <CheckBox x:Name="ShowPitchBox" Content="Show Pitch panel" />
+                        <CheckBox x:Name="ShowLoopBox" Content="Show AB Loop panel" />
+                        <CheckBox x:Name="ShowEqBox" Content="Show Equalizer panel" />
+                        <NumberBox x:Name="WaveformPeaksBox" Header="Waveform detail (bars, applies to next file)"
+                                   Minimum="100" Maximum="8000" SpinButtonPlacementMode="Inline" />
+                        <CheckBox x:Name="ClickToSeekBox" Content="Click / drag the waveform to seek" />
+                        <CheckBox x:Name="RememberListBox" Content="Remember the files between sessions" />
+
+                        <!-- Layout (Cider-style layout type + player type) -->
+                        <TextBlock Text="Layout" Style="{StaticResource SectionHeader}" />
+                        <ComboBox x:Name="LayoutTypeBox" Header="Layout type">
+                            <x:String>Mojave</x:String>
+                            <x:String>Mavericks</x:String>
+                            <x:String>Calico</x:String>
+                            <x:String>Montara</x:String>
+                        </ComboBox>
+                        <TextBlock Text="Mojave/Calico dock the queue left (narrow/wide); Mavericks/Montara dock it right."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <ComboBox x:Name="PlayerTypeBox" Header="Player type" Margin="0,4,0,0">
+                            <x:String>Comfy</x:String>
+                            <x:String>Compact</x:String>
+                            <x:String>Compact Inline</x:String>
+                        </ComboBox>
+                        <TextBlock Text="Comfy is the full two-row transport; Compact slims it down; Compact Inline merges seek into a single row."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+                        <!-- Appearance -->
+                        <TextBlock Text="Appearance" Style="{StaticResource SectionHeader}" />
+                        <ToggleSwitch x:Name="UseAccentSwitch" Header="Match the Windows accent color"
+                                      Toggled="UseAccentSwitch_Toggled" />
+                        <TextBlock Text="Custom accent (when above is off)"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ColorPicker x:Name="CustomAccentPicker"
+                                     IsAlphaEnabled="False" IsHexInputVisible="True" />
+                    </StackPanel>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
 </ContentDialog>

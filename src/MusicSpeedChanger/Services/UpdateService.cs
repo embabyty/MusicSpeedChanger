@@ -22,6 +22,58 @@ public sealed record UpdateInfo(
     string Tag = "",
     DateTimeOffset PublishedAt = default);
 
+/// <summary>Build channel classification: Canary (weekly), Beta, or Stable.</summary>
+public enum ReleaseChannel
+{
+    Canary = 0,
+    Beta = 1,
+    Stable = 2
+}
+
+/// <summary>
+/// Structured version representing major, minor, patch, channel, and prerelease build number.
+/// Accurately orders Canary weekly builds, Beta builds, and Stable releases.
+/// </summary>
+public sealed class AppReleaseVersion : IComparable<AppReleaseVersion>
+{
+    public Version BaseVersion { get; }
+    public ReleaseChannel Channel { get; }
+    public int PrereleaseNumber { get; }
+    public string RawString { get; }
+
+    public AppReleaseVersion(Version baseVersion, ReleaseChannel channel, int prereleaseNumber, string rawString = "")
+    {
+        BaseVersion = new Version(
+            Math.Max(0, baseVersion.Major),
+            Math.Max(0, baseVersion.Minor),
+            Math.Max(0, baseVersion.Build >= 0 ? baseVersion.Build : 0));
+        Channel = channel;
+        PrereleaseNumber = prereleaseNumber;
+        RawString = rawString;
+    }
+
+    public int CompareTo(AppReleaseVersion? other)
+    {
+        if (other == null) return 1;
+
+        // 1. Compare base versions (e.g. 3.0.0 vs 2.2.1)
+        int cmp = BaseVersion.CompareTo(other.BaseVersion);
+        if (cmp != 0) return cmp;
+
+        // 2. Base versions equal: compare channel hierarchy (Canary < Beta < Stable)
+        int channelCmp = Channel.CompareTo(other.Channel);
+        if (channelCmp != 0) return channelCmp;
+
+        // 3. Same channel: compare prerelease revision number (e.g. canary.3 vs canary.2)
+        return PrereleaseNumber.CompareTo(other.PrereleaseNumber);
+    }
+
+    public override string ToString() =>
+        Channel == ReleaseChannel.Stable
+            ? BaseVersion.ToString(3)
+            : $"{BaseVersion.ToString(3)}-{Channel.ToString().ToLowerInvariant()}.{PrereleaseNumber}";
+}
+
 /// <summary>
 /// Checks a feed for newer releases and downloads the installer.
 /// Supports the GitHub Releases API (default) and generic JSON feeds shaped as
@@ -72,49 +124,62 @@ public static class UpdateService
     }
 
     public static async Task<UpdateInfo?> CheckForUpdateAsync(
-        string feedUrl, bool includeBeta = false, CancellationToken ct = default)
+        string feedUrl, bool includeBeta = false, bool includeCanary = false, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(feedUrl)) return null;
 
-        // A feed pointing straight at a /releases list (array) — pick the best entry.
-        if (IsGitHubListUrl(feedUrl))
+        // If the user opted into pre-releases (Beta or Canary) and URL is GitHub, prefer releases list
+        string effectiveUrl = feedUrl;
+        if ((includeBeta || includeCanary) && !IsGitHubListUrl(feedUrl))
         {
-            using var listResponse = await Http.GetAsync(feedUrl, ct).ConfigureAwait(false);
-            listResponse.EnsureSuccessStatusCode();
-            using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
-            return PickBestGitHub(listDoc.RootElement, includeBeta);
+            string? listUrl = GetGitHubListUrl(feedUrl);
+            if (listUrl != null) effectiveUrl = listUrl;
         }
 
-        using var response = await Http.GetAsync(feedUrl, ct).ConfigureAwait(false);
+        // A feed pointing straight at a /releases list (array) — pick the best entry.
+        if (IsGitHubListUrl(effectiveUrl))
+        {
+            using var listResponse = await Http.GetAsync(effectiveUrl, ct).ConfigureAwait(false);
+            listResponse.EnsureSuccessStatusCode();
+            using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+            return PickBestGitHub(listDoc.RootElement, includeBeta, includeCanary);
+        }
+
+        using var response = await Http.GetAsync(effectiveUrl, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
 
-        if (!feedUrl.Contains("api.github.com", StringComparison.OrdinalIgnoreCase))
+        if (!effectiveUrl.Contains("api.github.com", StringComparison.OrdinalIgnoreCase))
         {
             var generic = ParseGenericFeed(doc.RootElement);
             if (generic == null || !IsNewerThanCurrent(generic)) return null;
-            if (generic.IsBeta && !includeBeta) return null;
+            if (generic.IsCanary && !includeCanary) return null;
+            if (generic.IsBeta && !generic.IsCanary && !includeBeta) return null;
             return generic;
         }
 
         var single = ParseGitHubRelease(doc.RootElement);
         if (single == null || !IsNewerThanCurrent(single)) return null;
-        if (!includeBeta) return single.IsBeta ? null : single;
-        if (single.IsBeta) return single;
+        if (single.IsCanary && !includeCanary) return null;
+        if (single.IsBeta && !single.IsCanary && !includeBeta) return null;
 
-        // Stable is latest, but the user opted into betas — check the release
-        // list for a newer beta (GitHub's /latest endpoint never returns prereleases).
-        try
+        // Stable is latest, but user opted into betas/canaries — check list for newer pre-release
+        if (includeBeta || includeCanary)
         {
-            string? listUrl = GetGitHubListUrl(feedUrl);
-            if (listUrl == null) return single;
-            using var listResponse = await Http.GetAsync(listUrl, ct).ConfigureAwait(false);
-            listResponse.EnsureSuccessStatusCode();
-            using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
-            var best = PickBestGitHub(listDoc.RootElement, includeBeta: true);
-            if (best != null && CompareReleases(best, single) >= 0) return best;
+            try
+            {
+                string? listUrl = GetGitHubListUrl(effectiveUrl);
+                if (listUrl != null)
+                {
+                    using var listResponse = await Http.GetAsync(listUrl, ct).ConfigureAwait(false);
+                    listResponse.EnsureSuccessStatusCode();
+                    using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+                    var best = PickBestGitHub(listDoc.RootElement, includeBeta, includeCanary);
+                    if (best != null && CompareReleases(best, single) >= 0) return best;
+                }
+            }
+            catch { /* list lookup is best-effort — fall back to single */ }
         }
-        catch { /* list lookup is best-effort — fall back to stable */ }
         return single;
     }
 
@@ -148,14 +213,12 @@ public static class UpdateService
             if (info == null || !info.IsBeta) continue;
             if (info.IsCanary)
             {
-                if (bestCanary == null || CompareReleases(info, bestCanary) > 0 ||
-                    (CompareReleases(info, bestCanary) == 0 && info.PublishedAt > bestCanary.PublishedAt))
+                if (bestCanary == null || CompareReleases(info, bestCanary) > 0)
                     bestCanary = info;
             }
             else
             {
-                if (bestBeta == null || CompareReleases(info, bestBeta) > 0 ||
-                    (CompareReleases(info, bestBeta) == 0 && info.PublishedAt > bestBeta.PublishedAt))
+                if (bestBeta == null || CompareReleases(info, bestBeta) > 0)
                     bestBeta = info;
             }
         }
@@ -284,7 +347,7 @@ public static class UpdateService
     }
 
     /// <summary>Newest release in a GitHub list that is newer than the running build.</summary>
-    private static UpdateInfo? PickBestGitHub(JsonElement array, bool includeBeta)
+    private static UpdateInfo? PickBestGitHub(JsonElement array, bool includeBeta, bool includeCanary = false)
     {
         if (array.ValueKind != JsonValueKind.Array) return null;
         UpdateInfo? best = null;
@@ -295,23 +358,130 @@ public static class UpdateService
                 draft.ValueKind == JsonValueKind.True) continue;
             var info = ParseGitHubRelease(entry);
             if (info == null || !IsNewerThanCurrent(info)) continue;
-            if (info.IsBeta && !includeBeta) continue;
+            if (info.IsCanary && !includeCanary) continue;
+            if (info.IsBeta && !info.IsCanary && !includeBeta) continue;
             if (best == null || CompareReleases(info, best) > 0) best = info;
         }
         return best;
     }
 
-    /// <summary>Orders releases: higher version wins; a stable build beats its own beta.</summary>
-    private static int CompareReleases(UpdateInfo a, UpdateInfo b)
+    /// <summary>
+    /// Orders releases: higher version wins; stable beats beta; beta beats canary;
+    /// higher prerelease build number wins; falls back to PublishedAt date.
+    /// </summary>
+    public static int CompareReleases(UpdateInfo a, UpdateInfo b)
     {
-        int cmp = a.Version.CompareTo(b.Version);
+        var va = ParseReleaseVersion(a);
+        var vb = ParseReleaseVersion(b);
+        int cmp = va.CompareTo(vb);
         if (cmp != 0) return cmp;
-        if (a.IsBeta == b.IsBeta) return 0;
-        return a.IsBeta ? -1 : 1;
+        return a.PublishedAt.CompareTo(b.PublishedAt);
     }
 
-    private static bool IsNewerThanCurrent(UpdateInfo info) =>
-        CompareReleases(info, new UpdateInfo(CurrentVersion, "", "", "", IsBeta: false)) > 0;
+    /// <summary>
+    /// Returns true if the provided update is strictly newer than the currently running build.
+    /// Accurately compares Canary weekly numbers, Beta numbers, and stable releases.
+    /// </summary>
+    public static bool IsNewerThanCurrent(UpdateInfo info)
+    {
+        if (info == null) return false;
+
+        // Fast-path: if tag directly matches running display version, not newer
+        string cleanTag = (info.Tag ?? "").Trim().TrimStart('v', 'V');
+        string cleanDisplay = DisplayVersion.Trim().TrimStart('v', 'V');
+        if (!string.IsNullOrEmpty(cleanTag) &&
+            string.Equals(cleanTag, cleanDisplay, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var releaseVer = ParseReleaseVersion(info);
+        var currentVer = CurrentReleaseVersion;
+
+        return releaseVer.CompareTo(currentVer) > 0;
+    }
+
+    public static AppReleaseVersion CurrentReleaseVersion =>
+        ParseReleaseVersion(DisplayVersion, CurrentChannel, CurrentVersion);
+
+    public static AppReleaseVersion ParseReleaseVersion(UpdateInfo info)
+    {
+        string text = !string.IsNullOrWhiteSpace(info.Tag) ? info.Tag : info.Version.ToString();
+        string channel = info.IsCanary ? "Canary" : (info.IsBeta ? "Beta" : "Stable");
+        return ParseReleaseVersion(text, channel, info.Version);
+    }
+
+    public static AppReleaseVersion ParseReleaseVersion(
+        string? text, string? channelHint = null, Version? fallbackVersion = null)
+    {
+        text = (text ?? "").Trim();
+
+        // 1. Determine channel
+        ReleaseChannel channel;
+        if (text.Contains("canary", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(channelHint, "Canary", StringComparison.OrdinalIgnoreCase))
+        {
+            channel = ReleaseChannel.Canary;
+        }
+        else if (text.Contains("beta", StringComparison.OrdinalIgnoreCase) ||
+                 text.Contains("alpha", StringComparison.OrdinalIgnoreCase) ||
+                 text.Contains("preview", StringComparison.OrdinalIgnoreCase) ||
+                 text.Contains("rc", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(channelHint, "Beta", StringComparison.OrdinalIgnoreCase))
+        {
+            channel = ReleaseChannel.Beta;
+        }
+        else
+        {
+            channel = ReleaseChannel.Stable;
+        }
+
+        // 2. Extract base version (e.g. 3.0.0 from "v3.0.0-canary.3" or "3.0.0 Canary 3")
+        Version baseVersion;
+        var verMatch = Regex.Match(text, @"(?:^|[^\d.])(?:v|V)?(\d+)\.(\d+)(?:\.(\d+))?");
+        if (verMatch.Success)
+        {
+            int major = int.Parse(verMatch.Groups[1].Value);
+            int minor = int.Parse(verMatch.Groups[2].Value);
+            int build = verMatch.Groups[3].Success ? int.Parse(verMatch.Groups[3].Value) : 0;
+            baseVersion = new Version(major, minor, build);
+        }
+        else if (fallbackVersion != null)
+        {
+            baseVersion = new Version(
+                Math.Max(0, fallbackVersion.Major),
+                Math.Max(0, fallbackVersion.Minor),
+                Math.Max(0, fallbackVersion.Build >= 0 ? fallbackVersion.Build : 0));
+        }
+        else
+        {
+            baseVersion = new Version(1, 0, 0);
+        }
+
+        // 3. Extract prerelease number (e.g. 3 from "canary.3" or "Canary 3" or "beta.2")
+        int prereleaseNum = 0;
+        if (channel != ReleaseChannel.Stable)
+        {
+            var numMatch = Regex.Match(
+                text,
+                @"(?:canary|beta|alpha|preview|rc)[.\s\-_]*(\d+)",
+                RegexOptions.IgnoreCase);
+            if (numMatch.Success && int.TryParse(numMatch.Groups[1].Value, out int n))
+            {
+                prereleaseNum = n;
+            }
+            else if (fallbackVersion != null && fallbackVersion.Revision > 0)
+            {
+                prereleaseNum = fallbackVersion.Revision;
+            }
+            else
+            {
+                prereleaseNum = 1;
+            }
+        }
+
+        return new AppReleaseVersion(baseVersion, channel, prereleaseNum, text);
+    }
 
     /// <summary>Weekly Canary builds ship with "canary" in the tag (e.g. v3.0.0-canary.1).</summary>
     internal static bool IsCanaryTag(string? text) =>

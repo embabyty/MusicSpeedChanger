@@ -23,8 +23,9 @@ public sealed class AudioEngine : IDisposable
     private SoundTouchSampleProvider? _processor;
     private EffectsChainProvider? _chain;
     private ISampleProvider? _volumeProvider;
-    private VolumeSampleProvider? _mixGainProvider;
+    private AutoMixFilterSampleProvider? _mixGainProvider;
     private float _mixGain = 1f;
+    private float _mixHighPassCutoff = 20f;
     private bool _disposed;
 
     /// <summary>When true, playback runs backwards from the current position.</summary>
@@ -49,7 +50,7 @@ public sealed class AudioEngine : IDisposable
     /// <summary>
     /// Per-engine crossfade gain (0…1) applied inside the DSP chain, independent of
     /// the user <see cref="Volume"/> (device volume). AutoMix ramps this on the
-    /// outgoing (1→0) and incoming (0→1) engines for an equal-power crossfade.
+    /// outgoing (1→0) and incoming (0→1) engines for equal-power, linear, or drop fades.
     /// Defaults to 1; preserved across <see cref="BuildOutputChain"/> rebuilds.
     /// </summary>
     public float MixGain
@@ -59,7 +60,22 @@ public sealed class AudioEngine : IDisposable
         {
             _mixGain = Math.Clamp(value, 0f, 1f);
             if (_mixGainProvider != null)
-                _mixGainProvider.Volume = _mixGain;
+                _mixGainProvider.MixGain = _mixGain;
+        }
+    }
+
+    /// <summary>
+    /// Per-engine high-pass filter cutoff in Hz (20…20000). Used by AutoMix for
+    /// DJ-style Bass Swap (rolling off <250 Hz) and Rise sweeps. Defaults to 20 Hz (bypass).
+    /// </summary>
+    public float MixHighPassCutoff
+    {
+        get => _mixHighPassCutoff;
+        set
+        {
+            _mixHighPassCutoff = Math.Clamp(value, 20f, 20000f);
+            if (_mixGainProvider != null)
+                _mixGainProvider.HighPassCutoff = _mixHighPassCutoff;
         }
     }
 
@@ -393,7 +409,11 @@ public sealed class AudioEngine : IDisposable
         _chain.Rebuild(SnapshotEffects());
         // Limiter sits post-effects so stretch overshoot + EQ boosts never clip the DAC.
         var limiter = new LimiterSampleProvider(_chain!);
-        _mixGainProvider = new VolumeSampleProvider(limiter) { Volume = _mixGain };
+        _mixGainProvider = new AutoMixFilterSampleProvider(limiter)
+        {
+            MixGain = _mixGain,
+            HighPassCutoff = _mixHighPassCutoff
+        };
         _volumeProvider = _mixGainProvider;
 
         _output = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 3 };
@@ -466,16 +486,19 @@ public sealed class AudioEngine : IDisposable
 
     public void Unload()
     {
-        try { _output?.Stop(); } catch { /* ignore */ }
         if (_output != null)
         {
             _output.PlaybackStopped -= OnPlaybackStopped;
+            try { _output.Stop(); } catch { /* ignore */ }
             _output.Dispose();
             _output = null;
         }
         _processor = null;
         _volumeProvider = null;
+        _mixGainProvider?.ResetFilter();
         _mixGainProvider = null;
+        _mixGain = 1f;
+        _mixHighPassCutoff = 20f;
         _chain = null;
         _sampleSource = null;
         _reverse = null;

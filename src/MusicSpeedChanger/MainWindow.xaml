@@ -13,13 +13,45 @@
 
         <!-- Custom title bar: transparent so the Mica backdrop shows through.
              Set as the draggable title-bar region in code-behind. -->
-        <Grid x:Name="AppTitleBar" Height="40" Background="Transparent">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Image Source="ms-appx:///Assets/MusicSpeed.png" Width="16" Height="16"
-                       Margin="0,0,8,0" VerticalAlignment="Center" />
-                <TextBlock Text="Music Speed Changer" VerticalAlignment="Center"
-                           Foreground="#E8E8F0" FontWeight="SemiBold" />
-            </StackPanel>
+        <!-- Custom title bar: transparent so the Mica backdrop shows through.
+             Set as the draggable title-bar region in code-behind. -->
+        <Grid x:Name="AppTitleBarFull" Height="40" Background="Transparent"
+              PointerPressed="TitleBar_PointerPressed"
+              DoubleTapped="TitleBar_DoubleTapped">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="140" />
+            </Grid.ColumnDefinitions>
+
+            <!-- App title and icon on the left (draggable region) -->
+            <Grid x:Name="AppTitleBarLeft" Grid.Column="0" Background="Transparent" Padding="16,0,24,0"
+                  PointerPressed="TitleBar_PointerPressed"
+                  DoubleTapped="TitleBar_DoubleTapped">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="ms-appx:///Assets/MusicSpeed.png" Width="16" Height="16"
+                           Margin="0,0,8,0" VerticalAlignment="Center" />
+                    <TextBlock Text="Music Speed Changer" VerticalAlignment="Center"
+                               Foreground="#E8E8F0" FontWeight="SemiBold" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Settings search bar at top of the window -->
+            <Grid Grid.Column="1" VerticalAlignment="Center" Background="Transparent"
+                  PointerPressed="TitleBar_PointerPressed"
+                  DoubleTapped="TitleBar_DoubleTapped">
+                <TextBox x:Name="SettingsSearchBox"
+                         PlaceholderText="Search settings"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         Width="340" MaxWidth="480"
+                         Height="32" CornerRadius="6"
+                         TextChanged="SettingsSearchBox_TextChanged"
+                         Visibility="Collapsed" />
+            </Grid>
+
+            <!-- Reserve area for caption buttons on the right -->
+            <Border Grid.Column="2" Width="140" Background="Transparent" />
         </Grid>
 
     <Border Grid.Row="1" Padding="12,12,12,8">
@@ -42,6 +74,12 @@
                 <Setter Property="FontWeight" Value="SemiBold" />
                 <Setter Property="Margin" Value="0,0,0,6" />
             </Style>
+            <Style TargetType="TextBlock" x:Key="SettingsSectionHeader">
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="FontSize" Value="15" />
+                <Setter Property="Foreground" Value="#E8E8F0" />
+                <Setter Property="Margin" Value="0,14,0,4" />
+            </Style>
             <Style TargetType="Button" x:Key="RailButton">
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="Foreground" Value="#E8E8F0" />
@@ -59,7 +97,7 @@
         </Grid.ColumnDefinitions>
 
         <!-- Navigation rail (Media Player style) -->
-        <Grid Grid.Column="0" Margin="0,0,8,0">
+        <Grid x:Name="NavRail" Grid.Column="0" Margin="0,0,8,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -103,7 +141,7 @@
             </Grid.RowDefinitions>
 
             <!-- Toolbar: status left, Save right (Open lives in the Files + button) -->
-            <Grid Grid.Row="0" Margin="0,0,0,8">
+            <Grid x:Name="TopToolbar" Grid.Row="0" Margin="0,0,0,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -123,67 +161,74 @@
                 <!-- Player view: files + controls -->
                 <Grid x:Name="PlayerView">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="230" />
-                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition x:Name="PlayerSideColumn" Width="230" />
+                        <ColumnDefinition x:Name="PlayerContentColumn" Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Files sidebar -->
-                    <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,6,6" Padding="8">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Text="Files" Style="{StaticResource CardHeader}" />
-                            <ListView Grid.Row="1" x:Name="FileListView" SelectionMode="Single"
-                                      SelectionChanged="FileListView_SelectionChanged"
-                                      AllowDrop="True" DragOver="FileList_DragOver" Drop="FileList_Drop"
-                                      KeyDown="FileListView_KeyDown">
-                                <ListView.ItemContainerStyle>
-                                    <Style TargetType="ListViewItem">
-                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                        <Setter Property="Padding" Value="4,2" />
-                                    </Style>
-                                </ListView.ItemContainerStyle>
-                                <ListView.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Padding="0,4">
-                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{Binding DurationText}" FontSize="11"
-                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ListView.ItemTemplate>
-                            </ListView>
-                            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Center">
-                                <Button Click="AddFilesButton_Click" Padding="8,2">
-                                    <ToolTipService.ToolTip>
-                                        <ToolTip Content="Add files" />
-                                    </ToolTipService.ToolTip>
-                                    <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
-                                </Button>
-                                <Button Click="RemoveFileButton_Click" Padding="8,2">
-                                    <ToolTipService.ToolTip>
-                                        <ToolTip Content="Remove selected" />
-                                    </ToolTipService.ToolTip>
-                                    <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
-                                </Button>
-                                <Button Click="ClearFilesButton_Click" Padding="8,2">
-                                    <ToolTipService.ToolTip>
-                                        <ToolTip Content="Clear files" />
-                                    </ToolTipService.ToolTip>
-                                    <FontIcon Glyph="&#xE8E6;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
-                                </Button>
-                            </StackPanel>
-                            <TextBlock Grid.Row="3" Text="Drop audio files here"
-                                       FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <!-- Files sidebar: flat on the window Mica (no card), list takes full height.
+                         Add/remove/clear live in the header so the list gets every spare pixel. -->
+                    <Grid x:Name="FilesPanel" Grid.Column="0" Margin="0,0,6,6" Padding="4,0,4,4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Files" Style="{StaticResource CardHeader}" Margin="0,0,0,0" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Click="AddFilesButton_Click" Padding="8,2">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Add files" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon Glyph="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                            </Button>
+                            <Button Grid.Column="2" Click="RemoveFileButton_Click" Padding="8,2">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Remove selected" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon Glyph="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                            </Button>
+                            <Button Grid.Column="3" Click="ClearFilesButton_Click" Padding="8,2">
+                                <ToolTipService.ToolTip>
+                                    <ToolTip Content="Clear files" />
+                                </ToolTipService.ToolTip>
+                                <FontIcon Glyph="&#xE8E6;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
+                            </Button>
                         </Grid>
-                    </Border>
+                        <ListView Grid.Row="1" x:Name="FileListView" SelectionMode="Single"
+                                  Padding="2,0,0,0"
+                                  SelectionChanged="FileListView_SelectionChanged"
+                                  AllowDrop="True" DragOver="FileList_DragOver" Drop="FileList_Drop"
+                                  KeyDown="FileListView_KeyDown">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="8,2" />
+                                    <Setter Property="Margin" Value="0,2,4,2" />
+                                    <Setter Property="CornerRadius" Value="6" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Padding="0,4">
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding DurationText}" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock Grid.Row="2" Text="Drop audio files here"
+                                   FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </Grid>
 
-                    <Grid Grid.Column="1">
+                    <Grid x:Name="PlayerContentGrid" Grid.Column="1">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
@@ -456,12 +501,288 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                 </ScrollViewer>
+
+                <!-- Settings view: full page with sidebar and back button -->
+                <Grid x:Name="SettingsView" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="SettingsSidebarColumn" Width="220" MinWidth="56" MaxWidth="480" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left: Back button + Toggle + Category Nav -->
+                    <Grid Grid.Column="0" Margin="0,0,4,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Header: Back button + Sidebar Expand/Collapse Toggle -->
+                        <Grid x:Name="SettingsSidebarHeader" Grid.Row="0" Margin="0,0,0,10">
+                            <!-- Expanded layout (width >= 120px) -->
+                            <Grid x:Name="SettingsHeaderExpanded" Visibility="Visible">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <Button x:Name="SettingsBackButton" Grid.Column="0" Click="SettingsBackButton_Click"
+                                        HorizontalAlignment="Stretch" Height="40" Padding="12,0"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        CornerRadius="8">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Back to Player" />
+                                    </ToolTipService.ToolTip>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Center" />
+                                        <TextBlock Text="Back to Player" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+
+                                <Button x:Name="SettingsSidebarToggle" Grid.Column="1" Click="SettingsSidebarToggle_Click"
+                                        Width="40" Height="40" Padding="0" Margin="6,0,0,0"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        CornerRadius="8">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Collapse sidebar" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE8A0;" FontFamily="Segoe MDL2 Assets" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Button>
+                            </Grid>
+
+                            <!-- Collapsed layout: both Back button and Expand button stacked vertically and centered -->
+                            <StackPanel x:Name="SettingsHeaderCollapsed" Spacing="6" HorizontalAlignment="Center" Visibility="Collapsed">
+                                <Button x:Name="SettingsBackButtonCollapsed" Click="SettingsBackButton_Click"
+                                        Width="44" Height="40" Padding="0"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        CornerRadius="8">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Back to Player" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Button>
+
+                                <Button x:Name="SettingsSidebarToggleCollapsed" Click="SettingsSidebarToggle_Click"
+                                        Width="44" Height="40" Padding="0"
+                                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                        BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        CornerRadius="8">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Expand sidebar" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE700;" FontFamily="Segoe MDL2 Assets" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Category nav list -->
+                        <ListView x:Name="SettingsNavList" Grid.Row="1"
+                                  Padding="0" SelectionMode="Single"
+                                  SelectionChanged="SettingsNavList_SelectionChanged">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="MinHeight" Value="40" />
+                                    <Setter Property="Height" Value="40" />
+                                    <Setter Property="Padding" Value="0" />
+                                    <Setter Property="Margin" Value="0,2" />
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Height="40" HorizontalAlignment="Stretch">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="48" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <ToolTipService.ToolTip>
+                                            <ToolTip Content="{Binding Name}" />
+                                        </ToolTipService.ToolTip>
+                                        <FontIcon Grid.Column="0" Glyph="{Binding Glyph}" FontFamily="Segoe MDL2 Assets" FontSize="16"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="14" VerticalAlignment="Center"
+                                                   TextTrimming="Clip" Margin="4,0,0,0" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+
+                    <!-- Splitter / Drag handle to expand/shrink sidebar width by dragging -->
+                    <Grid Grid.Column="1" Width="10" Margin="-5,0,-5,0" Background="Transparent"
+                          PointerEntered="SettingsSplitter_PointerEntered"
+                          PointerPressed="SettingsSplitter_PointerPressed"
+                          PointerMoved="SettingsSplitter_PointerMoved"
+                          PointerReleased="SettingsSplitter_PointerReleased"
+                          DoubleTapped="SettingsSplitter_DoubleTapped">
+                        <Rectangle Width="2" HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                                   Fill="{ThemeResource CardStrokeColorDefaultBrush}" Opacity="0.5" />
+                    </Grid>
+
+                    <!-- Right: scrollable page -->
+                    <ScrollViewer Grid.Column="2" VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto">
+                            <StackPanel Spacing="6" Padding="0,0,24,24" MaxWidth="850" HorizontalAlignment="Stretch">
+
+                                <!-- ==================== ABOUT ==================== -->
+                                <StackPanel x:Name="SettingsAboutPanel" Spacing="6">
+                                    <TextBlock x:Name="SettingsVersionLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                    <!-- Updates -->
+                                    <TextBlock Text="Updates" Style="{StaticResource SettingsSectionHeader}" />
+                                    <ToggleSwitch x:Name="SettingsAutoCheckSwitch" Header="Automatically check for updates on startup"
+                                                  Toggled="SettingsAutoCheckSwitch_Toggled" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                        <Button x:Name="SettingsCheckNowButton" Content="Check now" Click="SettingsCheckNowButton_Click" />
+                                        <Button x:Name="SettingsInstallUpdateButton" Content="Download &amp; install" Visibility="Collapsed"
+                                                Click="SettingsInstallUpdateButton_Click" Style="{ThemeResource AccentButtonStyle}" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="SettingsUpdateStatusLabel" TextWrapping="Wrap"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                    <!-- Update feed -->
+                                    <TextBlock Text="Update feed" Style="{StaticResource SettingsSectionHeader}" />
+                                    <TextBox x:Name="SettingsFeedUrlBox" Header="Update feed (GitHub Releases API or JSON {version, notes, url})"
+                                             TextChanged="SettingsFeedUrlBox_TextChanged" />
+
+                                    <!-- Supporter & beta -->
+                                    <TextBlock Text="Supporter &amp; beta" Style="{StaticResource SettingsSectionHeader}" />
+                                    <TextBlock Text="Beta builds are available to Patreon supporters. Log in to verify membership and unlock them."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                    <CheckBox x:Name="SettingsBetaUpdatesBox" Content="Include beta updates" Click="SettingsBetaUpdatesBox_Click" />
+                                    <ComboBox x:Name="SettingsInsiderChannelBox" Header="Insider Hub channel (beta builds, Patreon supporters)"
+                                              SelectionChanged="SettingsInsiderChannelBox_SelectionChanged" Margin="0,4,0,0">
+                                        <x:String>Beta</x:String>
+                                        <x:String>Canary</x:String>
+                                    </ComboBox>
+                                    <TextBlock Text="Canary ships weekly from the canary branch; startup checks follow this channel."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                        <Button x:Name="SettingsPatreonLoginButton" Content="Login with Patreon" Click="SettingsPatreonLoginButton_Click"
+                                                Style="{ThemeResource AccentButtonStyle}" />
+                                        <Button x:Name="SettingsPatreonUnlinkButton" Content="Unlink" Click="SettingsPatreonUnlinkButton_Click"
+                                                Visibility="Collapsed" />
+                                        <Button x:Name="SettingsPatreonButton" Content="Open Patreon page" Click="SettingsPatreonButton_Click" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="SettingsPatreonStatusLabel" TextWrapping="Wrap"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                    <!-- Beta channel -->
+                                    <TextBlock Text="Beta channel" Style="{StaticResource SettingsSectionHeader}" />
+                                    <TextBlock Text="Switching verifies your Patreon membership, then installs the beta next to this app."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                        <Button x:Name="SettingsSwitchToBetaButton" Content="Switch to Beta" Click="SettingsSwitchToBetaButton_Click"
+                                                Style="{ThemeResource AccentButtonStyle}" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="SettingsBetaStatusLabel" TextWrapping="Wrap"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                                    <!-- About / owner -->
+                                    <TextBlock Text="Music Speed Changer by EmAppleFlagship (Patreon)."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                        <Button x:Name="SettingsEmailOwnerButton" Content="Email the owner" Click="SettingsEmailOwnerButton_Click" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="SettingsOwnerEmailLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+
+                                <!-- ==================== AUDIO ==================== -->
+                                <StackPanel x:Name="SettingsAudioPanel" Spacing="6" Visibility="Collapsed">
+                                    <!-- Speed & pitch -->
+                                    <TextBlock Text="Speed &amp; pitch" Style="{StaticResource SettingsSectionHeader}" />
+                                    <NumberBox x:Name="SettingsDefaultTempoBox" Header="Default tempo (%)"
+                                               Minimum="25" Maximum="300" SpinButtonPlacementMode="Inline"
+                                               ValueChanged="SettingsDefaultTempoBox_ValueChanged" />
+                                    <NumberBox x:Name="SettingsDefaultPitchBox" Header="Default pitch (semitones)"
+                                               Minimum="-12" Maximum="12" SpinButtonPlacementMode="Inline"
+                                               ValueChanged="SettingsDefaultPitchBox_ValueChanged" />
+                                    <CheckBox x:Name="SettingsApplyDefaultsBox" Content="Reset to these defaults when a file is opened"
+                                              Click="SettingsApplyDefaultsBox_Click" />
+                                    <NumberBox x:Name="SettingsTempoStepBox" Header="Tempo slider step (%)"
+                                               Minimum="0.5" Maximum="10" SpinButtonPlacementMode="Inline"
+                                               ValueChanged="SettingsTempoStepBox_ValueChanged" />
+                                    <NumberBox x:Name="SettingsPitchStepBox" Header="Pitch slider step (semitones)"
+                                               Minimum="0.1" Maximum="1" SpinButtonPlacementMode="Inline"
+                                               ValueChanged="SettingsPitchStepBox_ValueChanged" />
+
+                                    <!-- Effects -->
+                                    <TextBlock Text="Effects" Style="{StaticResource SettingsSectionHeader}" />
+                                    <CheckBox x:Name="SettingsRememberEffectsBox"
+                                              Content="Save effects and restore them on startup (tempo, pitch, volume, EQ)"
+                                              Click="SettingsRememberEffectsBox_Click" />
+                                    <TextBlock Text="When off, newly opened files use the defaults above instead."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+                                    <!-- AutoMix & Transitions (Spotify style) -->
+                                    <TextBlock Text="AutoMix &amp; Transitions" Style="{StaticResource SettingsSectionHeader}" />
+                                    <CheckBox x:Name="SettingsAutoMixEnabledBox" Content="Enable AutoMix transitions between songs"
+                                              Click="SettingsAutoMixEnabledBox_Click" />
+                                    <NumberBox x:Name="SettingsAutoMixSecondsBox" Header="Crossfade length (seconds, 1–12)"
+                                               Minimum="1" Maximum="12" SpinButtonPlacementMode="Inline"
+                                               ValueChanged="SettingsAutoMixSecondsBox_ValueChanged" />
+                                    <TextBlock Text="Transition styles, bars, Beat-Sync and preview live in the AutoMix mixer — click the gear next to the MIX button in the player. Inactive when Repeat One, AB loop, or Reverse is on."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <!-- ==================== APPEARANCE ==================== -->
+                                <StackPanel x:Name="SettingsAppearancePanel" Spacing="6" Visibility="Collapsed">
+                                    <!-- Editor controls -->
+                                    <TextBlock Text="Editor controls" Style="{StaticResource SettingsSectionHeader}" />
+                                    <CheckBox x:Name="SettingsShowTempoBox" Content="Show Tempo panel" Click="SettingsShowTempoBox_Click" />
+                                    <CheckBox x:Name="SettingsShowPitchBox" Content="Show Pitch panel" Click="SettingsShowPitchBox_Click" />
+                                    <CheckBox x:Name="SettingsShowLoopBox" Content="Show AB Loop panel" Click="SettingsShowLoopBox_Click" />
+                                    <CheckBox x:Name="SettingsShowEqBox" Content="Show Equalizer panel" Click="SettingsShowEqBox_Click" />
+                                    <NumberBox x:Name="SettingsWaveformPeaksBox" Header="Waveform detail (bars, applies to next file)"
+                                               Minimum="100" Maximum="8000" SpinButtonPlacementMode="Inline"
+                                               ValueChanged="SettingsWaveformPeaksBox_ValueChanged" />
+                                    <CheckBox x:Name="SettingsClickToSeekBox" Content="Click / drag the waveform to seek"
+                                              Click="SettingsClickToSeekBox_Click" />
+                                    <CheckBox x:Name="SettingsRememberListBox" Content="Remember the files between sessions"
+                                              Click="SettingsRememberListBox_Click" />
+
+                                    <!-- Layout -->
+                                    <TextBlock Text="Layout" Style="{StaticResource SettingsSectionHeader}" />
+                                    <ComboBox x:Name="SettingsLayoutTypeBox" Header="Layout type"
+                                              SelectionChanged="SettingsLayoutTypeBox_SelectionChanged">
+                                        <x:String>Mojave</x:String>
+                                        <x:String>Mavericks</x:String>
+                                        <x:String>Calico</x:String>
+                                        <x:String>Montara</x:String>
+                                    </ComboBox>
+                                    <TextBlock Text="Mojave/Calico dock the queue left (narrow/wide); Mavericks/Montara dock it right."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                    <ComboBox x:Name="SettingsPlayerTypeBox" Header="Player type" Margin="0,4,0,0"
+                                              SelectionChanged="SettingsPlayerTypeBox_SelectionChanged">
+                                        <x:String>Comfy</x:String>
+                                        <x:String>Compact</x:String>
+                                        <x:String>Compact Inline</x:String>
+                                    </ComboBox>
+                                    <TextBlock Text="Comfy is the full two-row transport; Compact slims it down; Compact Inline merges seek into a single row."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+                                    <!-- Appearance -->
+                                    <TextBlock Text="Appearance" Style="{StaticResource SettingsSectionHeader}" />
+                                    <ToggleSwitch x:Name="SettingsUseAccentSwitch" Header="Match the Windows accent color"
+                                                  Toggled="SettingsUseAccentSwitch_Toggled" />
+                                    <TextBlock Text="Custom accent (when above is off)"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <ColorPicker x:Name="SettingsCustomAccentPicker"
+                                                 IsAlphaEnabled="False" IsHexInputVisible="True"
+                                                 ColorChanged="SettingsCustomAccentPicker_ColorChanged" />
+                                </StackPanel>
+
+                            </StackPanel>
+                        </ScrollViewer>
+                </Grid>
             </Grid>
 
             <!-- Bottom player bar (Media Player style) -->
             <Border Grid.Row="2" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Margin="0,8,0,0" Padding="10,8">
                 <StackPanel Spacing="2">
-                    <Grid>
+                    <Grid x:Name="SeekRow">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="70" />
                             <ColumnDefinition Width="*" />
@@ -480,8 +801,8 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <Border Width="44" Height="44" CornerRadius="6"
+                        <StackPanel x:Name="TransportInfoPanel" Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Border x:Name="TransportArtwork" Width="44" Height="44" CornerRadius="6"
                                     Background="#1E1E28" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                                 <FontIcon Glyph="&#xE8D6;" FontFamily="Segoe MDL2 Assets" FontSize="20"
                                           Foreground="#B8B8D0" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -493,7 +814,7 @@
                                            FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <StackPanel x:Name="TransportButtonsPanel" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                             <Button x:Name="ShuffleButton" Click="ShuffleButton_Click" IsEnabled="False"
                                     Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent">
                                 <ToolTipService.ToolTip>
@@ -542,35 +863,42 @@
                                 </ToolTipService.ToolTip>
                                 <FontIcon x:Name="RepeatIcon" Glyph="&#xE8EE;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#77778A" />
                             </Button>
-                            <!-- AutoMix (Beta, Canary builds only): DJ-style tempo-matched crossfade.
-                                 Visibility is managed in code (collapsed unless running Canary). -->
-                            <Button x:Name="AutoMixButton" Click="AutoMixButton_Click" IsEnabled="False"
+                            <!-- AutoMix: DJ-style beat-synced and customizable crossfade -->
+                            <Button x:Name="AutoMixButton" Click="AutoMixButton_Click" RightTapped="AutoMixButton_RightTapped" IsEnabled="False"
                                     Width="40" Height="40" CornerRadius="20" Padding="0" BorderThickness="0" Background="Transparent"
                                     Visibility="Collapsed">
                                 <ToolTipService.ToolTip>
-                                    <ToolTip Content="AutoMix (Beta): tempo-matched crossfade into the next track (Canary only)" />
+                                    <ToolTip x:Name="AutoMixToolTip" Content="AutoMix: seamless transitions into the next track (click to toggle, gear opens the mixer)" />
                                 </ToolTipService.ToolTip>
                                 <StackPanel Spacing="0" HorizontalAlignment="Center" VerticalAlignment="Center">
                                     <FontIcon x:Name="AutoMixIcon" Glyph="&#xE8AB;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#77778A"
                                               HorizontalAlignment="Center" />
-                                    <TextBlock x:Name="AutoMixBetaBadge" Text="BETA" FontSize="7" FontWeight="SemiBold"
+                                    <TextBlock x:Name="AutoMixBetaBadge" Text="MIX" FontSize="7" FontWeight="SemiBold"
                                                Foreground="#FFC107" HorizontalAlignment="Center" Margin="0,-2,0,0" />
                                 </StackPanel>
                             </Button>
                             <StackPanel x:Name="AutoMixDurationPanel" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
                                         Visibility="Collapsed">
                                 <Slider x:Name="AutoMixDurationSlider" Minimum="1" Maximum="12" Value="5"
-                                        Width="70" TickFrequency="1" StepFrequency="0.5"
+                                        Width="60" TickFrequency="1" StepFrequency="0.5"
                                         ValueChanged="AutoMixSeconds_Changed" VerticalAlignment="Center">
                                     <ToolTipService.ToolTip>
                                         <ToolTip Content="AutoMix crossfade length in seconds (1–12)" />
                                     </ToolTipService.ToolTip>
                                 </Slider>
-                                <TextBlock x:Name="AutoMixDurationLabel" Text="5s Beta" FontSize="11"
+                                <TextBlock x:Name="AutoMixDurationLabel" Text="5s" FontSize="11"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                <Button x:Name="AutoMixSettingsButton" Click="AutoMixSettingsButton_Click"
+                                        Width="26" Height="26" CornerRadius="13" Padding="0" BorderThickness="0" Background="Transparent"
+                                        VerticalAlignment="Center">
+                                    <ToolTipService.ToolTip>
+                                        <ToolTip Content="Open the AutoMix mixer (Spotify style)" />
+                                    </ToolTipService.ToolTip>
+                                    <FontIcon Glyph="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="#888899" />
+                                </Button>
                             </StackPanel>
                         </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <StackPanel x:Name="TransportVolumePanel" Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <FontIcon Glyph="&#xE992;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#E8E8F0" VerticalAlignment="Center" />
                             <Slider x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="80" Width="110"
                                     ValueChanged="VolumeSlider_ValueChanged" />

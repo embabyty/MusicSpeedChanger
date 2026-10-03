@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using MusicSpeedChanger.Services;
@@ -18,6 +19,15 @@ public sealed partial class SettingsDialog : ContentDialog
 
     private UpdateInfo? _pendingUpdate;
     private bool _checking;
+
+    private sealed record NavItem(string Name, string Glyph);
+
+    private static readonly NavItem[] AllNavItems =
+    {
+        new("About", "\uE946"),
+        new("Audio", "\uE8D6"),
+        new("Appearance", "\uE771"),
+    };
 
     public SettingsDialog(AppSettings settings)
     {
@@ -50,11 +60,23 @@ public sealed partial class SettingsDialog : ContentDialog
 
         RememberEffectsBox.IsChecked = Draft.RememberEffects;
 
-        // AutoMix (Beta) is Canary-only: hide the section on Stable/Beta builds.
-        bool isCanary = UpdateService.DisplayVersion.IndexOf("canary", StringComparison.OrdinalIgnoreCase) >= 0;
+        LayoutTypeBox.SelectedItem = Draft.LayoutType switch
+        {
+            "Mavericks" => "Mavericks",
+            "Calico" => "Calico",
+            "Montara" => "Montara",
+            _ => "Mojave",
+        };
+        PlayerTypeBox.SelectedItem = Draft.PlayerType switch
+        {
+            "Compact" => "Compact",
+            "CompactInline" => "Compact Inline",
+            _ => "Comfy",
+        };
+
         AutoMixEnabledBox.IsChecked = Draft.AutoMixEnabled;
         AutoMixSecondsBox.Value = Math.Clamp(Draft.AutoMixSeconds, 1, 12);
-        Visibility autoMixVisibility = isCanary ? Visibility.Visible : Visibility.Collapsed;
+        Visibility autoMixVisibility = Visibility.Visible;
         AutoMixHeader.Visibility = autoMixVisibility;
         AutoMixEnabledBox.Visibility = autoMixVisibility;
         AutoMixSecondsBox.Visibility = autoMixVisibility;
@@ -64,7 +86,45 @@ public sealed partial class SettingsDialog : ContentDialog
         CustomAccentPicker.Color = ParseHex(Draft.CustomAccentHex, Windows.UI.Color.FromArgb(255, 0x2E, 0x7D, 0x32));
         CustomAccentPicker.IsEnabled = !Draft.UseSystemAccent;
 
+        NavList.ItemsSource = AllNavItems;
+        NavList.SelectedIndex = 0;
+        ShowCategory("About");
+
         PrimaryButtonClick += (_, _) => ReadControls();
+    }
+
+    private void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (NavList.SelectedItem is NavItem item)
+            ShowCategory(item.Name);
+    }
+
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        string q = (SearchBox.Text ?? "").Trim();
+        var filtered = string.IsNullOrEmpty(q)
+            ? AllNavItems
+            : AllNavItems.Where(n => n.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).ToArray();
+        NavList.ItemsSource = filtered;
+        if (filtered.Length > 0)
+        {
+            // Keep the current page if it still matches; otherwise jump to the first hit.
+            var current = filtered.FirstOrDefault(n =>
+                string.Equals(n.Name, CategoryTitle.Text, StringComparison.OrdinalIgnoreCase))
+                ?? filtered[0];
+            NavList.SelectedItem = current;
+        }
+    }
+
+    private void ShowCategory(string name)
+    {
+        CategoryTitle.Text = name;
+        AboutPanel.Visibility = string.Equals(name, "About", StringComparison.OrdinalIgnoreCase)
+            ? Visibility.Visible : Visibility.Collapsed;
+        AudioPanel.Visibility = string.Equals(name, "Audio", StringComparison.OrdinalIgnoreCase)
+            ? Visibility.Visible : Visibility.Collapsed;
+        AppearancePanel.Visibility = string.Equals(name, "Appearance", StringComparison.OrdinalIgnoreCase)
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ReadControls()
@@ -92,10 +152,18 @@ public sealed partial class SettingsDialog : ContentDialog
 
         Draft.RememberEffects = RememberEffectsBox.IsChecked == true;
 
+        Draft.LayoutType = LayoutTypeBox.SelectedItem as string ?? "Mojave";
+        Draft.PlayerType = string.Equals(PlayerTypeBox.SelectedItem as string, "Compact Inline", StringComparison.OrdinalIgnoreCase)
+            ? "CompactInline"
+            : string.Equals(PlayerTypeBox.SelectedItem as string, "Compact", StringComparison.OrdinalIgnoreCase)
+                ? "Compact" : "Comfy";
+
         if (AutoMixEnabledBox.Visibility == Visibility.Visible)
         {
             Draft.AutoMixEnabled = AutoMixEnabledBox.IsChecked == true;
             Draft.AutoMixSeconds = Math.Clamp(AutoMixSecondsBox.Value, 1, 12);
+            // Style, Beat-Sync and Smart Cue live in the AutoMix mixer popup;
+            // the draft keeps its cloned values for those keys.
         }
 
         Draft.UseSystemAccent = UseAccentSwitch.IsOn;
@@ -183,7 +251,9 @@ public sealed partial class SettingsDialog : ContentDialog
         try
         {
             bool wantBeta = BetaUpdatesBox.IsChecked == true;
-            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "", wantBeta);
+            bool wantCanary = wantBeta && Draft.BetaAccessUnlocked &&
+                string.Equals(Draft.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase);
+            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "", wantBeta, wantCanary);
             if (info == null)
             {
                 UpdateStatusLabel.Text = wantBeta
@@ -280,7 +350,9 @@ public sealed partial class SettingsDialog : ContentDialog
                 Draft.PatreonFullName = account.FullName;
             }
             BetaStatusLabel.Text = "Checking for beta builds…";
-            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "", includeBeta: true);
+            bool wantCanary = Draft.BetaAccessUnlocked &&
+                string.Equals(Draft.InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase);
+            var info = await UpdateService.CheckForUpdateAsync(FeedUrlBox.Text?.Trim() ?? "", includeBeta: true, includeCanary: wantCanary);
             if (info == null || !info.IsBeta)
             {
                 BetaStatusLabel.Text = "No beta build available right now — you're up to date.";

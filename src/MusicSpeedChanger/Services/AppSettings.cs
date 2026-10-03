@@ -57,14 +57,27 @@ public sealed class AppSettings
     /// <summary>0 = Off, 1 = Repeat All, 2 = Repeat One.</summary>
     public int RepeatMode { get; set; } = 0;
 
-    // ----- AutoMix (Beta, Canary builds only) -----
+    // ----- Layout (Cider-style) -----
+    /// <summary>Sidebar dock: "Mojave" (left 230), "Mavericks" (right 230),
+    /// "Calico" (left 340), "Montara" (right 340).</summary>
+    public string LayoutType { get; set; } = "Mojave";
+    /// <summary>Transport density: "Comfy" (full two-row), "Compact" (slim),
+    /// or "CompactInline" (seek merged into one row).</summary>
+    public string PlayerType { get; set; } = "Comfy";
+
+    // ----- AutoMix (Spotify-style transitions) -----
     /// <summary>
-    /// DJ-style tempo-matched crossfade into the next queue track.
-    /// Canary-only Beta: older/stable builds ignore these keys (see Extra round-trip).
+    /// DJ-style beat-synced crossfade into the next queue track.
     /// </summary>
     public bool AutoMixEnabled { get; set; } = false;
     /// <summary>Crossfade length in seconds (1…12). Effective delay before track end.</summary>
     public double AutoMixSeconds { get; set; } = 5;
+    /// <summary>Transition style: "BassSwap" (DJ EQ Swap), "Blend" (Equal Power), "Rise" (High-pass sweep), "BeatDrop", "Linear".</summary>
+    public string AutoMixStyle { get; set; } = "BassSwap";
+    /// <summary>Whether to beat-match and phase-align tracks when beat grids are detected.</summary>
+    public bool AutoMixBeatSync { get; set; } = true;
+    /// <summary>Whether to trim leading silence on incoming tracks so music enters promptly (Smart Cue).</summary>
+    public bool AutoMixSkipSilence { get; set; } = true;
 
     // ----- Appearance -----
     public bool UseSystemAccent { get; set; } = true;
@@ -124,7 +137,9 @@ public sealed class AppSettings
     public AppSettings Clone()
     {
         var json = JsonSerializer.Serialize(this);
-        return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+        var copy = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+        copy.Clamp();
+        return copy;
     }
 
     public void CopyFrom(AppSettings other)
@@ -154,13 +169,36 @@ public sealed class AppSettings
         LastVolumePercent = Math.Clamp(LastVolumePercent, 0, 100);
         RepeatMode = Math.Clamp(RepeatMode, 0, 2);
         AutoMixSeconds = Math.Clamp(AutoMixSeconds, 1, 12);
+        AutoMixStyle = NormalizeAutoMixStyle(AutoMixStyle);
         if (string.IsNullOrWhiteSpace(UpdateFeedUrl)) UpdateFeedUrl = DefaultFeedUrl;
         if (string.IsNullOrWhiteSpace(CustomAccentHex)) CustomAccentHex = "#2E7D32";
         if (!string.Equals(InsiderChannel, "Canary", StringComparison.OrdinalIgnoreCase))
             InsiderChannel = "Beta";
+        LayoutType = NormalizeLayoutType(LayoutType);
+        PlayerType = NormalizePlayerType(PlayerType);
         if (string.IsNullOrWhiteSpace(PatreonRefreshToken)) PatreonRefreshToken = null;
         if (string.IsNullOrWhiteSpace(PatreonFullName)) PatreonFullName = null;
         if (LastEqGains != null && LastEqGains.Length != Audio.GraphicEqualizer.BandCount)
             LastEqGains = null;
     }
+
+    public static string NormalizeAutoMixStyle(string? value) =>
+        string.Equals(value, "Blend", StringComparison.OrdinalIgnoreCase) ? "Blend"
+        : string.Equals(value, "Rise", StringComparison.OrdinalIgnoreCase) ? "Rise"
+        : string.Equals(value, "BeatDrop", StringComparison.OrdinalIgnoreCase) ||
+          string.Equals(value, "Beat Drop", StringComparison.OrdinalIgnoreCase) ? "BeatDrop"
+        : string.Equals(value, "Linear", StringComparison.OrdinalIgnoreCase) ? "Linear"
+        : "BassSwap";
+
+    private static string NormalizeLayoutType(string? value) =>
+        string.Equals(value, "Mavericks", StringComparison.OrdinalIgnoreCase) ? "Mavericks"
+        : string.Equals(value, "Calico", StringComparison.OrdinalIgnoreCase) ? "Calico"
+        : string.Equals(value, "Montara", StringComparison.OrdinalIgnoreCase) ? "Montara"
+        : "Mojave";
+
+    private static string NormalizePlayerType(string? value) =>
+        string.Equals(value, "Compact", StringComparison.OrdinalIgnoreCase) ? "Compact"
+        : string.Equals(value, "CompactInline", StringComparison.OrdinalIgnoreCase) ||
+          string.Equals(value, "Compact Inline", StringComparison.OrdinalIgnoreCase) ? "CompactInline"
+        : "Comfy";
 }
