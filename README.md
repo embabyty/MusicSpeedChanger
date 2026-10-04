@@ -34,6 +34,9 @@ musicians practicing tricky sections.
   durations, Delete-key removal, list restored on startup (toggle in Settings)
 - **Shuffle & repeat** — 🔀 shuffles the queue, 🔁 cycles Off → All → One;
   tracks auto-advance on end, with a "Playing Next" readout under the transport
+- **Discord Rich Presence** (Cider-style) — track title, artist/album, tempo +
+  pitch (e.g. • 125% • +2.0 st), play/pause and elapsed time on your Discord
+  profile; set your Application ID under Settings → Discord
 
 ## Tech
 

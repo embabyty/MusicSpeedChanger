@@ -82,6 +82,10 @@ public sealed partial class MainWindow : Window
     // ----- Taskbar progress (Cider-style song progress on the taskbar button) -----
     private readonly TaskbarProgressService _taskbar = new();
 
+    // ----- Discord Rich Presence (Cider-style track status on the Discord profile) -----
+    private readonly DiscordPresenceService _discord = new();
+    private DateTime _lastDiscordPush = DateTime.MinValue;
+
     // ----- Beta gate (Patreon login required to run beta builds) -----
     private bool _betaGateActive;
 
@@ -151,6 +155,7 @@ public sealed partial class MainWindow : Window
                     _engine.Progress = SeekSlider.Value / 1000.0;
                 RefreshPosition();
                 RefreshSmtcTimeline(force: true);
+                RefreshDiscordPresence(force: true);
             }), true);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
@@ -172,6 +177,8 @@ public sealed partial class MainWindow : Window
             _smtc.Dispose();
             try { _taskbar.Clear(WindowHandle); } catch { /* ignore */ }
             _taskbar.Dispose();
+            try { _discord.Clear(); } catch { /* ignore */ }
+            _discord.Dispose();
             try { _mixNext?.Dispose(); } catch { /* ignore */ }
             _engine.Dispose();
         };
@@ -182,6 +189,8 @@ public sealed partial class MainWindow : Window
         UpdateNextUp();
         InitSmtc();
         InitTaskbarThumb();
+        InitDiscord();
+        InitZoomMenu();
         MaybeShowBetaGateAsync();
 
         if (_settings.AutoCheckUpdates)
@@ -342,6 +351,7 @@ public sealed partial class MainWindow : Window
         new("About", "\uE946"),
         new("Audio", "\uE8D6"),
         new("Appearance", "\uE771"),
+        new("Discord", "\uE8BD"),
     };
 
     private UpdateInfo? _settingsPendingUpdate;
@@ -484,39 +494,161 @@ public sealed partial class MainWindow : Window
     private void SettingsNavList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (SettingsNavList?.SelectedItem is SettingsNavItem item)
+        {
+            if (_isSearchingSettings)
+            {
+                SettingsSearchBox.Text = "";
+                RefreshSettingsSearchResults("");
+            }
             ShowSettingsCategory(item.Name);
+        }
     }
 
     private string _currentSettingsCategory = "About";
 
-    private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    /// <summary>One searchable setting: picking it jumps to its page and focuses the control.</summary>
+    public sealed record SettingsSearchResult(
+        string Title, string Category, string CategoryGlyph, string TargetName, string Keywords);
+
+    // Windows-style search index over every setting (titles + keywords, not just page names).
+    private static readonly SettingsSearchResult[] AllSettingsSearchResults =
     {
-        if (SettingsSearchBox == null || SettingsNavList == null) return;
-        string q = (SettingsSearchBox.Text ?? "").Trim();
-        var filtered = string.IsNullOrEmpty(q)
-            ? SettingsNavItems
-            : SettingsNavItems.Where(n => n.Name.Contains(q, StringComparison.OrdinalIgnoreCase)).ToArray();
-        SettingsNavList.ItemsSource = filtered;
-        if (filtered.Length > 0)
+        new("Automatically check for updates", "About", "", nameof(SettingsAutoCheckSwitch), "update auto startup check"),
+        new("Check for updates now", "About", "", nameof(SettingsCheckNowButton), "check now update download"),
+        new("Update feed", "About", "", nameof(SettingsFeedUrlBox), "github releases json url feed"),
+        new("Include beta updates", "About", "", nameof(SettingsBetaUpdatesBox), "beta prerelease preview"),
+        new("Insider Hub channel", "About", "", nameof(SettingsInsiderChannelBox), "canary beta channel insider hub"),
+        new("Login with Patreon", "About", "", nameof(SettingsPatreonLoginButton), "patreon login supporter link membership"),
+        new("Switch to Beta", "About", "", nameof(SettingsSwitchToBetaButton), "beta channel switch install"),
+        new("Email the owner", "About", "", nameof(SettingsEmailOwnerButton), "contact email support owner"),
+
+        new("Default tempo", "Audio", "", nameof(SettingsDefaultTempoBox), "tempo speed default percent"),
+        new("Default pitch", "Audio", "", nameof(SettingsDefaultPitchBox), "pitch key semitones default"),
+        new("Reset to defaults when a file is opened", "Audio", "", nameof(SettingsApplyDefaultsBox), "defaults reset file open load"),
+        new("Tempo slider step", "Audio", "", nameof(SettingsTempoStepBox), "tempo step slider increment"),
+        new("Pitch slider step", "Audio", "", nameof(SettingsPitchStepBox), "pitch step slider increment semitone"),
+        new("Save effects and restore them on startup", "Audio", "", nameof(SettingsRememberEffectsBox), "remember save restore effects eq tempo pitch volume startup"),
+        new("Enable AutoMix transitions", "Audio", "", nameof(SettingsAutoMixEnabledBox), "automix crossfade transitions mix dj blend"),
+        new("Crossfade length", "Audio", "", nameof(SettingsAutoMixSecondsBox), "automix crossfade seconds duration fade"),
+
+        new("Show Tempo panel", "Appearance", "", nameof(SettingsShowTempoBox), "show hide tempo panel editor"),
+        new("Show Pitch panel", "Appearance", "", nameof(SettingsShowPitchBox), "show hide pitch panel"),
+        new("Show AB Loop panel", "Appearance", "", nameof(SettingsShowLoopBox), "show hide loop ab panel"),
+        new("Show Equalizer panel", "Appearance", "", nameof(SettingsShowEqBox), "show hide equalizer eq effects panel"),
+        new("Waveform detail", "Appearance", "", nameof(SettingsWaveformPeaksBox), "waveform detail bars peaks quality"),
+        new("Click / drag the waveform to seek", "Appearance", "", nameof(SettingsClickToSeekBox), "click seek waveform drag"),
+        new("Remember the files between sessions", "Appearance", "", nameof(SettingsRememberListBox), "remember files queue playlist restore sessions"),
+        new("Layout type", "Appearance", "", nameof(SettingsLayoutTypeBox), "layout mojave mavericks calico montara sidebar dock"),
+        new("Player type", "Appearance", "", nameof(SettingsPlayerTypeBox), "player comfy compact transport density"),
+        new("Match the Windows accent color", "Appearance", "", nameof(SettingsUseAccentSwitch), "accent color theme windows system"),
+        new("Custom accent", "Appearance", "", nameof(SettingsCustomAccentPicker), "accent custom color picker"),
+
+        new("Show Discord Rich Presence", "Discord", "", nameof(SettingsDiscordEnabledSwitch), "discord rich presence status profile"),
+        new("Discord Application ID", "Discord", "", nameof(SettingsDiscordClientIdBox), "discord application client id app portal"),
+        new("Show tempo & pitch in Discord status", "Discord", "", nameof(SettingsDiscordTempoPitchBox), "discord tempo pitch show"),
+        new("Reconnect Discord", "Discord", "", nameof(SettingsDiscordReconnectButton), "discord reconnect retry"),
+    };
+
+    private static List<SettingsSearchResult> SearchSettings(string query)
+    {
+        query = (query ?? "").Trim();
+        if (string.IsNullOrEmpty(query)) return new List<SettingsSearchResult>();
+        return AllSettingsSearchResults
+            .Select(r => (result: r, score: ScoreSetting(r, query)))
+            .Where(t => t.score >= 0)
+            .OrderBy(t => t.score)
+            .ThenBy(t => t.result.Title, StringComparer.OrdinalIgnoreCase)
+            .Select(t => t.result)
+            .ToList();
+    }
+
+    private static int ScoreSetting(SettingsSearchResult r, string q)
+    {
+        if (r.Title.StartsWith(q, StringComparison.OrdinalIgnoreCase)) return 0;
+        if (r.Title.Contains(q, StringComparison.OrdinalIgnoreCase)) return 1;
+        if (r.Keywords.Contains(q, StringComparison.OrdinalIgnoreCase)) return 2;
+        if (r.Category.Contains(q, StringComparison.OrdinalIgnoreCase)) return 3;
+        return -1;
+    }
+
+    private void SettingsSearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        RefreshSettingsSearchResults(sender.Text);
+    }
+
+    private bool _isSearchingSettings;
+
+    private void RefreshSettingsSearchResults(string query)
+    {
+        query = query.Trim();
+        _isSearchingSettings = query.Length > 0;
+        var results = SearchSettings(query);
+        SettingsSearchResultsList.ItemsSource = results;
+        SettingsSearchResultsSummary.Text = results.Count == 1
+            ? $"1 result for \"{query}\""
+            : $"{results.Count} results for \"{query}\"";
+        SettingsSearchNoResultsText.Visibility = results.Count == 0
+            ? Visibility.Visible : Visibility.Collapsed;
+        ShowSettingsCategory(_currentSettingsCategory);
+    }
+
+    private void SettingsSearchResultsList_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is SettingsSearchResult result)
+            NavigateToSetting(result);
+    }
+
+    private void SettingsSearchBox_QuerySubmitted(AutoSuggestBox sender, AutoSuggestBoxQuerySubmittedEventArgs args)
+    {
+        var pick = args.ChosenSuggestion as SettingsSearchResult
+            ?? SearchSettings(args.QueryText).FirstOrDefault();
+        if (pick != null)
+            NavigateToSetting(pick);
+    }
+
+    /// <summary>Jumps to the page holding a search result and focuses its control.</summary>
+    private void NavigateToSetting(SettingsSearchResult result)
+    {
+        SettingsSearchBox.Text = "";
+        RefreshSettingsSearchResults("");
+        if (SettingsView == null || SettingsView.Visibility != Visibility.Visible)
+            ShowView("settings");
+        if (SettingsNavList != null)
         {
-            var current = filtered.FirstOrDefault(n =>
-                string.Equals(n.Name, _currentSettingsCategory, StringComparison.OrdinalIgnoreCase))
-                ?? filtered[0];
-            SettingsNavList.SelectedItem = current;
+            var page = SettingsNavItems.FirstOrDefault(n =>
+                string.Equals(n.Name, result.Category, StringComparison.OrdinalIgnoreCase));
+            if (page != null)
+                SettingsNavList.SelectedItem = page;
         }
+        ShowSettingsCategory(result.Category);
+        try
+        {
+            if (SettingsView?.FindName(result.TargetName) is UIElement el)
+            {
+                el.StartBringIntoView();
+                _ = el.Focus(FocusState.Programmatic);
+            }
+        }
+        catch { /* navigation already landed on the right page */ }
     }
 
     private void ShowSettingsCategory(string name)
     {
         _currentSettingsCategory = name;
+        if (SettingsSearchResultsPanel != null)
+            SettingsSearchResultsPanel.Visibility = _isSearchingSettings
+                ? Visibility.Visible : Visibility.Collapsed;
         if (SettingsAboutPanel != null)
-            SettingsAboutPanel.Visibility = string.Equals(name, "About", StringComparison.OrdinalIgnoreCase)
+            SettingsAboutPanel.Visibility = !_isSearchingSettings && string.Equals(name, "About", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible : Visibility.Collapsed;
         if (SettingsAudioPanel != null)
-            SettingsAudioPanel.Visibility = string.Equals(name, "Audio", StringComparison.OrdinalIgnoreCase)
+            SettingsAudioPanel.Visibility = !_isSearchingSettings && string.Equals(name, "Audio", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible : Visibility.Collapsed;
         if (SettingsAppearancePanel != null)
-            SettingsAppearancePanel.Visibility = string.Equals(name, "Appearance", StringComparison.OrdinalIgnoreCase)
+            SettingsAppearancePanel.Visibility = !_isSearchingSettings && string.Equals(name, "Appearance", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible : Visibility.Collapsed;
+        if (SettingsDiscordPanel != null)
+            SettingsDiscordPanel.Visibility = !_isSearchingSettings && string.Equals(name, "Discord", StringComparison.OrdinalIgnoreCase)
                 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -597,6 +729,14 @@ public sealed partial class MainWindow : Window
                 SettingsCustomAccentPicker.Color = ParseHex(_settings.CustomAccentHex, Windows.UI.Color.FromArgb(255, 0x2E, 0x7D, 0x32));
                 SettingsCustomAccentPicker.IsEnabled = !_settings.UseSystemAccent;
             }
+
+            if (SettingsDiscordEnabledSwitch != null)
+                SettingsDiscordEnabledSwitch.IsOn = _settings.DiscordEnabled;
+            if (SettingsDiscordClientIdBox != null)
+                SettingsDiscordClientIdBox.Text = _settings.DiscordClientId;
+            if (SettingsDiscordTempoPitchBox != null)
+                SettingsDiscordTempoPitchBox.IsChecked = _settings.DiscordShowTempoPitch;
+            UpdateDiscordStatusUi();
         }
         finally
         {
@@ -669,7 +809,17 @@ public sealed partial class MainWindow : Window
             _settings.CustomAccentHex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
         }
 
+        if (SettingsDiscordEnabledSwitch != null)
+            _settings.DiscordEnabled = SettingsDiscordEnabledSwitch.IsOn;
+        if (SettingsDiscordClientIdBox != null)
+            _settings.DiscordClientId = (SettingsDiscordClientIdBox.Text ?? "").Trim();
+        if (SettingsDiscordTempoPitchBox != null)
+            _settings.DiscordShowTempoPitch = SettingsDiscordTempoPitchBox.IsChecked == true;
+
         _settings.Save();
+        _discord.Configure(_settings.DiscordEnabled, _settings.DiscordClientId);
+        UpdateDiscordStatusUi();
+        RefreshDiscordPresence(force: true);
         ApplyLiveSettings();
         ApplyAccent();
         ApplyLayoutSettings();
@@ -2649,15 +2799,46 @@ public sealed partial class MainWindow : Window
         _engine.Progress = progress;
         RefreshPosition();
         RefreshSmtcTimeline(force: true);
+        RefreshDiscordPresence(force: true);
     }
 
     /// <summary>Mobile-style magnifier: cycles waveform zoom levels 0..10.</summary>
-    private void ZoomButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Populates the waveform zoom dropdown (mobile parity: Level 0..10).</summary>
+    private void InitZoomMenu()
     {
-        Waveform.ZoomLevel = (Waveform.ZoomLevel + 1) % 11;
-        ZoomBadge.Text = Waveform.ZoomLevel.ToString();
-        ToolTipService.SetToolTip(ZoomButton,
-            $"Waveform zoom — level {Waveform.ZoomLevel} of 10 (click to zoom in)");
+        if (ZoomMenuFlyout == null) return;
+        ZoomMenuFlyout.Items.Clear();
+        for (int level = 0; level <= 10; level++)
+        {
+            var item = new RadioMenuFlyoutItem
+            {
+                Text = $"Level {level}",
+                Tag = level,
+                GroupName = "WaveformZoom",
+                IsChecked = Waveform.ZoomLevel == level,
+            };
+            item.Click += ZoomLevelMenu_Click;
+            ZoomMenuFlyout.Items.Add(item);
+        }
+    }
+
+    private void ZoomMenuFlyout_Opening(object? sender, object e)
+    {
+        if (ZoomMenuFlyout == null) return;
+        foreach (var item in ZoomMenuFlyout.Items)
+        {
+            if (item is RadioMenuFlyoutItem radio && radio.Tag is int level)
+                radio.IsChecked = Waveform.ZoomLevel == level;
+        }
+    }
+
+    private void ZoomLevelMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioMenuFlyoutItem item && item.Tag is int level)
+        {
+            Waveform.ZoomLevel = level;
+            ZoomBadge.Text = Waveform.ZoomLevel.ToString();
+        }
     }
 
     private void RefreshPosition()
@@ -2695,6 +2876,9 @@ public sealed partial class MainWindow : Window
         finally { _updatingSeek = false; }
         RefreshSmtcTimeline();
         RefreshTaskbarProgress();
+        // Steady-state Discord refresh (drift correction + reconnect), throttled.
+        if ((DateTime.UtcNow - _lastDiscordPush).TotalSeconds >= 15)
+            RefreshDiscordPresence(force: false);
     }
 
     /// <summary>
@@ -2785,6 +2969,7 @@ public sealed partial class MainWindow : Window
         }
         UpdateEffectiveLabel();
         RefreshSmtcTimeline(force: true);
+        RefreshDiscordPresence(force: false);
     }
 
     private void TempoPreset_Click(object sender, RoutedEventArgs e)
@@ -2805,6 +2990,7 @@ public sealed partial class MainWindow : Window
         {
             try { incoming.PitchSemitones = e.NewValue; } catch { /* ignore */ }
         }
+        RefreshDiscordPresence(force: false);
     }
 
     private void PitchPreset_Click(object sender, RoutedEventArgs e)
@@ -3544,6 +3730,7 @@ public sealed partial class MainWindow : Window
             RefreshSmtcTimeline(force: true);
         }
         catch { /* ignore */ }
+        RefreshDiscordPresence(force: true);
     }
 
     private void RefreshSmtcTimeline(bool force = false)
@@ -3554,6 +3741,108 @@ public sealed partial class MainWindow : Window
         _lastSmtcTimeline = now;
         _smtc.UpdateTimeline(_engine.SourcePosition, _engine.SourceDuration,
             Math.Clamp(TempoSlider.Value / 100.0, 0.25, 3.0));
+    }
+
+    // ---------- Discord Rich Presence (Cider-style) ----------
+
+    private void InitDiscord()
+    {
+        try
+        {
+            _discord.StatusChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateDiscordStatusUi);
+            _discord.Configure(_settings.DiscordEnabled, _settings.DiscordClientId);
+            UpdateDiscordStatusUi();
+            RefreshDiscordPresence(force: true);
+        }
+        catch { /* presence is best-effort */ }
+    }
+
+    /// <summary>
+    /// Pushes playback state to Discord. Forced updates (track / play-pause /
+    /// seek) go immediately; steady refreshes are throttled to stay within
+    /// Discord's rate limits — the service dedupes the rest.
+    /// </summary>
+    private void RefreshDiscordPresence(bool force = false)
+    {
+        try
+        {
+            if (!force && (DateTime.UtcNow - _lastDiscordPush).TotalSeconds < 5) return;
+            _lastDiscordPush = DateTime.UtcNow;
+            if (!_engine.IsLoaded)
+            {
+                _discord.Clear();
+                return;
+            }
+            _discord.Refresh(
+                _engine.FilePath,
+                isLoaded: true,
+                isPlaying: _engine.IsPlaying,
+                position: _engine.SourcePosition,
+                duration: _engine.SourceDuration,
+                tempoPercent: TempoSlider.Value,
+                pitchSemitones: PitchSlider.Value,
+                showTempoPitch: _settings.DiscordShowTempoPitch,
+                force: force);
+        }
+        catch { /* never break playback for presence */ }
+    }
+
+    private void UpdateDiscordStatusUi()
+    {
+        try
+        {
+            if (SettingsDiscordStatusLabel != null)
+                SettingsDiscordStatusLabel.Text = "Status: " + _discord.StatusText;
+        }
+        catch { /* settings view may not exist yet */ }
+    }
+
+    private void SettingsDiscordEnabled_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.DiscordEnabled = SettingsDiscordEnabledSwitch.IsOn;
+        _settings.Save();
+        _discord.Configure(_settings.DiscordEnabled, _settings.DiscordClientId);
+        UpdateDiscordStatusUi();
+        RefreshDiscordPresence(force: true);
+    }
+
+    private void SettingsDiscordClientIdBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.DiscordClientId = (SettingsDiscordClientIdBox.Text ?? "").Trim();
+        _settings.Save();
+        _discord.Configure(_settings.DiscordEnabled, _settings.DiscordClientId);
+        UpdateDiscordStatusUi();
+        RefreshDiscordPresence(force: true);
+    }
+
+    private void SettingsDiscordTempoPitchBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsView) return;
+        _settings.DiscordShowTempoPitch = SettingsDiscordTempoPitchBox.IsChecked == true;
+        _settings.Save();
+        RefreshDiscordPresence(force: true);
+    }
+
+    private void SettingsDiscordReconnectButton_Click(object sender, RoutedEventArgs e)
+    {
+        _settings.DiscordClientId = (SettingsDiscordClientIdBox?.Text ?? "").Trim();
+        _settings.Save();
+        _discord.Configure(_settings.DiscordEnabled, _settings.DiscordClientId);
+        _discord.Reconnect();
+        UpdateDiscordStatusUi();
+        RefreshDiscordPresence(force: true);
+    }
+
+    private async void SettingsDiscordHelpButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(
+                new Uri(DiscordPresenceService.DeveloperPortalUrl));
+        }
+        catch { /* best effort */ }
     }
 
     private bool CanGoNext()

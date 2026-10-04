@@ -83,6 +83,14 @@ public sealed class AppSettings
     public bool UseSystemAccent { get; set; } = true;
     public string CustomAccentHex { get; set; } = "#2E7D32";
 
+    // ----- Discord Rich Presence (Cider-style) -----
+    /// <summary>When true, the current track is shown on the Discord profile.</summary>
+    public bool DiscordEnabled { get; set; } = true;
+    /// <summary>Discord Application ID (Client ID) from discord.com/developers/applications.</summary>
+    public string DiscordClientId { get; set; } = "";
+    /// <summary>When true, tempo/pitch are appended (e.g. "• 125% • +2.0 st").</summary>
+    public bool DiscordShowTempoPitch { get; set; } = true;
+
     // ----- Effects chain (Equalizer APO style; engine is source of truth) -----
     public List<Audio.EffectBlock> EffectChain { get; set; } = new();
 
@@ -176,6 +184,7 @@ public sealed class AppSettings
             InsiderChannel = "Beta";
         LayoutType = NormalizeLayoutType(LayoutType);
         PlayerType = NormalizePlayerType(PlayerType);
+        DiscordClientId = (DiscordClientId ?? "").Trim();
         if (string.IsNullOrWhiteSpace(PatreonRefreshToken)) PatreonRefreshToken = null;
         if (string.IsNullOrWhiteSpace(PatreonFullName)) PatreonFullName = null;
         if (LastEqGains != null && LastEqGains.Length != Audio.GraphicEqualizer.BandCount)

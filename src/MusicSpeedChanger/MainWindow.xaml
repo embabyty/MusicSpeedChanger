@@ -34,14 +34,16 @@
 
             <!-- Settings search bar at top of the window -->
             <Grid Grid.Column="1" VerticalAlignment="Center" Background="Transparent">
-                <TextBox x:Name="SettingsSearchBox"
-                         PlaceholderText="Search settings"
-                         HorizontalAlignment="Center"
-                         VerticalAlignment="Center"
-                         Width="340" MaxWidth="480"
-                         Height="32" CornerRadius="6"
-                         TextChanged="SettingsSearchBox_TextChanged"
-                         Visibility="Collapsed" />
+                <AutoSuggestBox x:Name="SettingsSearchBox"
+                                PlaceholderText="Search settings"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Width="340" MaxWidth="480"
+                                Height="32" CornerRadius="6"
+                                TextChanged="SettingsSearchBox_TextChanged"
+                                QuerySubmitted="SettingsSearchBox_QuerySubmitted"
+                                Visibility="Collapsed">
+                </AutoSuggestBox>
             </Grid>
 
             <!-- Reserve area for caption buttons on the right.
@@ -242,12 +244,15 @@
                                         </ToolTipService.ToolTip>
                                     </TextBlock>
                                 </Border>
-                                <Button x:Name="ZoomButton" Click="ZoomButton_Click" Padding="8,4" VerticalAlignment="Center">
+                                <DropDownButton x:Name="ZoomButton" Padding="8,4" VerticalAlignment="Center">
                                     <ToolTipService.ToolTip>
-                                        <ToolTip Content="Waveform zoom — click to zoom in" />
+                                        <ToolTip Content="Waveform zoom — pick a level (0 = fit all)" />
                                     </ToolTipService.ToolTip>
                                     <FontIcon Glyph="&#xE71E;" FontFamily="Segoe MDL2 Assets" FontSize="14" />
-                                </Button>
+                                    <DropDownButton.Flyout>
+                                        <MenuFlyout x:Name="ZoomMenuFlyout" Opening="ZoomMenuFlyout_Opening" />
+                                    </DropDownButton.Flyout>
+                                </DropDownButton>
                             </StackPanel>
                         </Grid>
 
@@ -621,6 +626,64 @@
                     <ScrollViewer Grid.Column="2" VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto">
                             <StackPanel Spacing="6" Padding="0,0,24,24" MaxWidth="850" HorizontalAlignment="Stretch">
 
+                                <!-- Search results replace the settings category content while a query is active. -->
+                                <StackPanel x:Name="SettingsSearchResultsPanel" Spacing="8" Visibility="Collapsed">
+                                    <TextBlock Text="Search results" FontSize="24" FontWeight="SemiBold"
+                                               Foreground="#E8E8F0" Margin="0,0,0,4" />
+                                    <TextBlock x:Name="SettingsSearchResultsSummary"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock x:Name="SettingsSearchNoResultsText"
+                                               Text="No settings found. Try a different search."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               Visibility="Collapsed" Margin="0,8,0,0" />
+                                    <ListView x:Name="SettingsSearchResultsList"
+                                              IsItemClickEnabled="True"
+                                              SelectionMode="None"
+                                              ItemClick="SettingsSearchResultsList_ItemClick"
+                                              Background="Transparent"
+                                              Padding="0">
+                                        <ListView.ItemContainerStyle>
+                                            <Style TargetType="ListViewItem">
+                                                <Setter Property="MinHeight" Value="60" />
+                                                <Setter Property="Padding" Value="0" />
+                                                <Setter Property="Margin" Value="0,3" />
+                                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            </Style>
+                                        </ListView.ItemContainerStyle>
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                        BorderThickness="1" CornerRadius="8" Padding="14,10">
+                                                    <Grid ColumnSpacing="12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <FontIcon Grid.Column="0" Glyph="{Binding CategoryGlyph}"
+                                                                  FontFamily="Segoe MDL2 Assets" FontSize="17"
+                                                                  Foreground="#B8B8D0"
+                                                                  VerticalAlignment="Center" />
+                                                        <StackPanel Grid.Column="1" Spacing="2"
+                                                                    VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding Title}" FontSize="14"
+                                                                       Foreground="#E8E8F0" />
+                                                            <TextBlock Text="{Binding Category}" FontSize="12"
+                                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                        </StackPanel>
+                                                        <FontIcon Grid.Column="2" Glyph="&#xE76C;"
+                                                                  FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                  VerticalAlignment="Center" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+                                </StackPanel>
+
                                 <!-- ==================== ABOUT ==================== -->
                                 <StackPanel x:Name="SettingsAboutPanel" Spacing="6">
                                     <TextBlock x:Name="SettingsVersionLabel" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -767,6 +830,29 @@
                                     <ColorPicker x:Name="SettingsCustomAccentPicker"
                                                  IsAlphaEnabled="False" IsHexInputVisible="True"
                                                  ColorChanged="SettingsCustomAccentPicker_ColorChanged" />
+                                </StackPanel>
+
+                                <!-- ==================== DISCORD ==================== -->
+                                <StackPanel x:Name="SettingsDiscordPanel" Spacing="6" Visibility="Collapsed">
+                                    <TextBlock Text="Discord Rich Presence" Style="{StaticResource SettingsSectionHeader}" />
+                                    <TextBlock Text="Show what you're practicing on your Discord profile, Cider-style: track title, artist, play/pause and elapsed time."
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                                    <ToggleSwitch x:Name="SettingsDiscordEnabledSwitch" Header="Show Discord Rich Presence"
+                                                  Toggled="SettingsDiscordEnabled_Toggled" />
+                                    <TextBox x:Name="SettingsDiscordClientIdBox" Header="Discord Application ID (Client ID)"
+                                             PlaceholderText="e.g. 123456789012345678"
+                                             TextChanged="SettingsDiscordClientIdBox_TextChanged" />
+                                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap">
+                                        Create an app at discord.com/developers/applications, copy its Application ID here, then upload three images under Rich Presence → Art Assets named exactly: logo (app icon), play, pause.
+                                    </TextBlock>
+                                    <CheckBox x:Name="SettingsDiscordTempoPitchBox" Content="Show tempo &amp; pitch in the status (e.g. • 125% • +2.0 st)"
+                                              Click="SettingsDiscordTempoPitchBox_Click" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                                        <Button x:Name="SettingsDiscordReconnectButton" Content="Reconnect" Click="SettingsDiscordReconnectButton_Click" />
+                                        <Button x:Name="SettingsDiscordHelpButton" Content="Open Discord developer portal" Click="SettingsDiscordHelpButton_Click" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="SettingsDiscordStatusLabel" TextWrapping="Wrap"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 </StackPanel>
 
                             </StackPanel>
