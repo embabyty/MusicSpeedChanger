@@ -1,6 +1,6 @@
 ; Music Speed Changer (Canary) — Inno Setup installer
 ; Installs side-by-side with stable and beta: separate folder, AppId, and shortcuts.
-; Builds Setup-MusicSpeedChanger-Canary-3.0.0-canary.exe from the published WinUI 3 build.
+; Builds Setup-MusicSpeedChanger-Canary-3.0.0-canary.5.exe from the published WinUI 3 build.
 ; Publish first (WinUI unpackaged self-contained ships the whole folder):
 ;   dotnet publish src/MusicSpeedChanger/MusicSpeedChanger.csproj -c Release -p:Platform=x64 -o dist/publish
 ; Attach the result to a GitHub *prerelease* with "canary" in the tag
@@ -9,8 +9,8 @@
 
 #define MyAppName "Music Speed Changer Canary"
 #define MyAppExeName "MusicSpeedChanger.exe"
-#define MyAppVersion "3.0.0 Canary 4"
-#define MyAppVersionFile "3.0.0-canary.4"
+#define MyAppVersion "3.0.0 Canary 5"
+#define MyAppVersionFile "3.0.0-canary.5"
 #define MyAppPublisher "EmAppleFlagship"
 
 [Setup]
