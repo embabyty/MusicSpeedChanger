@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 import MSCCore
 
@@ -14,9 +15,6 @@ struct FilesView: View {
             HStack {
                 Text("Files").font(.headline)
                 Spacer()
-                Button("Clear") { tracks.clear() }
-                    .buttonStyle(.link)
-                    .disabled(tracks.tracks.isEmpty)
             }
             .padding(.horizontal, 12)
             .padding(.top, 10)
@@ -49,6 +47,19 @@ struct FilesView: View {
                                 )
                         }
                         .tag(track.id)
+                        .contextMenu {
+                            Button("Play", systemImage: "play.fill") {
+                                tracks.selectedID = track.id
+                                onSelect(track)
+                            }
+                            Button("Show in Finder", systemImage: "folder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([track.url])
+                            }
+                            Divider()
+                            Button("Remove", systemImage: "trash", role: .destructive) {
+                                tracks.remove(track)
+                            }
+                        }
                     }
                 }
                 .listStyle(.sidebar)

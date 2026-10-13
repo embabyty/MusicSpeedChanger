@@ -21,8 +21,8 @@ SwiftUI in the Liquid Glass style of macOS 26.
 - **Waveform display** with playhead, click/drag to seek, loop-region highlight,
   and a magnifier menu with zoom Levels 0–10 — zoomed in, the playhead pins to
   the center and the waveform scrolls beneath it
-- **Export to WAV** with current tempo + pitch + EQ (exports the AB loop if one
-  is set, with loop-repeat count and `_eq` in the filename when EQ is active)
+- **Export to WAV or M4A** with current tempo + pitch + EQ (exports the AB
+  loop if one is set, with loop-repeat count and `_eq` in the filename when EQ is active)
 - Volume control, effective-duration readout ("(plays as 2:00 @ 150%)")
 - Clean DSP chain: `AVAudioUnitTimePitch` for independent tempo/pitch, two chained
   `AVAudioUnitEQ` nodes for the 31 bands, and an Apple DynamicsProcessor peak

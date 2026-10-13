@@ -13,17 +13,11 @@ STAGE="/tmp/${VOLUME}-dmg"
 # 1. Fresh app bundle.
 ./scripts/build-app.sh "$CONFIG"
 
-# 2. Stage: app + Applications symlink + background art.
+# 2. Stage: app + Applications symlink.
 rm -rf "$STAGE" "$DMG"
-mkdir -p "$STAGE/.background"
+mkdir -p "$STAGE"
 cp -R "dist/${VOLUME}.app" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-if [[ -f "Resources/dmg-background.png" ]]; then
-  # Custom artwork (e.g. the misty-mountains UI): cover-fit to 1320x880.
-  swift scripts/prepare-dmg-background.swift "Resources/dmg-background.png" "$STAGE/.background/background.png"
-else
-  swift scripts/render-dmg-background.swift "$STAGE/.background/background.png"
-fi
 
 # 3. Writable disk image, then lay it out in Finder.
 # Drop any stale mounts from a previous failed run so the new image
@@ -40,14 +34,13 @@ VOL_LINE=$(echo "$ATTACH_OUT" | grep -E '/Volumes/' | head -1)
 DEV=$(echo "$VOL_LINE" | awk '{print $1}')
 MNT=$(echo "$VOL_LINE" | sed -n 's|.*\(/Volumes/.*\)|\1|p')
 echo "DEV=$DEV MNT=$MNT"
-ls -la "$MNT/.background/"
 sleep 2
 
 # Volume icon (app logo in Finder's sidebar/titlebar). Cosmetic: don't fail the build.
 cp Resources/AppIcon.icns "$MNT/.VolumeIcon.icns" 2>/dev/null || echo "warning: volume icon copy failed"
 SetFile -a C "$MNT" 2>/dev/null || true
 
-osascript <<EOF
+osascript <<EOF || echo "warning: Finder DMG layout skipped (headless runner?)"
 tell application "Finder"
     tell disk "${VOLUME}"
         open
@@ -58,8 +51,6 @@ tell application "Finder"
         set viewOptions to the icon view options of container window
         set arrangement of viewOptions to not arranged
         set icon size of viewOptions to 128
-        set bgFile to POSIX file ("${MNT}/.background/background.png") as alias
-        set background picture of viewOptions to bgFile
         delay 1
         set position of item "${VOLUME}.app" of container window to {170, 210}
         set position of item "Applications" of container window to {490, 210}

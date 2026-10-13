@@ -98,6 +98,11 @@ struct SettingsView: View {
                            isOn: binding(\.includeBetaUpdates))
                     PrefNote("When on, the app checks this project's GitHub releases on launch, betas included.")
                 }
+                PrefRow("Discord:") {
+                    Toggle("Show listening activity in Discord (Rich Presence)",
+                           isOn: binding(\.discordRPCEnabled))
+                    PrefNote("Track name, tempo, and pitch appear on your Discord profile while music is loaded. Needs the Discord desktop app running.")
+                }
                 PrefRow("Feed:") {
                     TextField("GitHub Releases API URL", text: binding(\.updateFeedUrl))
                     HStack {

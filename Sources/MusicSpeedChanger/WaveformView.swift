@@ -52,21 +52,17 @@ struct WaveformView: View {
                 context.fill(Path(CGRect(origin: .zero, size: size)),
                              with: .color(Color(white: 0.10)))
 
-                // loop region highlight + A/B badges (badges show whenever set)
-                if let a = loopA, let b = loopB, b > a, duration > 0 {
-                    let x0 = xForBucket(a / duration * Double(total), start: start, count: count, width: Double(size.width))
-                    let x1 = xForBucket(b / duration * Double(total), start: start, count: count, width: Double(size.width))
-                    if loopEnabled {
-                        let clamped = CGRect(x: max(x0, 0), y: 0,
-                                             width: min(x1, Double(size.width)) - max(x0, 0),
-                                             height: Double(size.height))
-                        if clamped.width > 0 {
-                            context.fill(Path(clamped),
-                                         with: .color(Color(red: 1, green: 0.76, blue: 0.03).opacity(0.15)))
-                        }
+                // A/B badges appear as soon as each point is set; the region
+                // highlight needs a valid pair with the loop switched on.
+                if duration > 0 {
+                    let totalD = Double(total)
+                    func xForSeconds(_ seconds: Double) -> Double {
+                        xForBucket(seconds / duration * totalD,
+                                   start: start, count: count, width: Double(size.width))
                     }
-                    for (label, mx) in [("A", x0), ("B", x1)] {
-                        guard mx >= -13, mx <= Double(size.width) + 13 else { continue }
+                    func badge(_ label: String, seconds: Double) {
+                        let mx = xForSeconds(seconds)
+                        guard mx >= -13, mx <= Double(size.width) + 13 else { return }
                         let cx = min(max(mx, 12), Double(size.width) - 12)
                         let cy = Double(size.height) / 2
                         context.fill(Path(CGRect(x: cx - 0.75, y: 0, width: 1.5,
@@ -80,6 +76,19 @@ struct WaveformView: View {
                                         .foregroundColor(.white),
                                      at: CGPoint(x: cx, y: cy))
                     }
+                    if let a = loopA, let b = loopB, b > a, loopEnabled {
+                        let x0 = xForSeconds(a)
+                        let x1 = xForSeconds(b)
+                        let clamped = CGRect(x: max(x0, 0), y: 0,
+                                             width: min(x1, Double(size.width)) - max(x0, 0),
+                                             height: Double(size.height))
+                        if clamped.width > 0 {
+                            context.fill(Path(clamped),
+                                         with: .color(Color(red: 1, green: 0.76, blue: 0.03).opacity(0.15)))
+                        }
+                    }
+                    if let a = loopA { badge("A", seconds: a) }
+                    if let b = loopB { badge("B", seconds: b) }
                 }
 
                 // waveform bars sampled through the visible window
@@ -98,13 +107,16 @@ struct WaveformView: View {
                     }
                 }
 
-                // playhead: travels at level ≤ 5, pinned center when following
-                let x: Double = {
-                    if follow || duration <= 0 { return Double(size.width) / 2 }
-                    return Double(size.width) * position / duration
-                }()
-                context.fill(Path(CGRect(x: x - 1, y: 0, width: 2, height: Double(size.height))),
-                             with: .color(.white))
+                // playhead: travels at level ≤ 5, pinned center when following.
+                // Hidden until a file is loaded so an empty waveform stays clean.
+                if duration > 0 {
+                    let x: Double = {
+                        if follow { return Double(size.width) / 2 }
+                        return Double(size.width) * position / duration
+                    }()
+                    context.fill(Path(CGRect(x: x - 1, y: 0, width: 2, height: Double(size.height))),
+                                 with: .color(.white))
+                }
             }
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 guard duration > 0 else { return }

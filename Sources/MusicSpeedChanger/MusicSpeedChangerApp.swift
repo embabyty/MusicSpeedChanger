@@ -6,6 +6,7 @@ struct MusicSpeedChangerApp: App {
     @StateObject private var engine = AudioEngine()
     @StateObject private var tracks = TrackList()
     @StateObject private var settings = SettingsStore()
+    @StateObject private var discord = DiscordPresenceController()
 
     var body: some Scene {
         WindowGroup("Music Speed Changer") {
@@ -17,6 +18,7 @@ struct MusicSpeedChangerApp: App {
                 .frame(minWidth: 900, minHeight: 720)
                 .onAppear {
                     NSApp.activate(ignoringOtherApps: true)
+                    discord.configure(engine: engine, settings: settings)
                     if settings.settings.autoCheckUpdates {
                         UpdateChecker.checkIfNewer()
                     }
@@ -30,6 +32,14 @@ struct MusicSpeedChangerApp: App {
         .windowStyle(.titleBar)
         .commands {
             CommandGroup(replacing: .newItem) { }
+            CommandGroup(after: .pasteboard) {
+                Button("Clear All Files") { tracks.clear() }
+                    .disabled(tracks.tracks.isEmpty)
+                Divider()
+                Button("Edit Cards…") {
+                    NotificationCenter.default.post(name: .showConfigureCustomPresets, object: nil)
+                }
+            }
         }
 
         Settings {
@@ -94,12 +104,31 @@ final class TrackList: ObservableObject {
         selectedID = nil
     }
 
+    func remove(_ track: TrackItem) {
+        tracks.removeAll(where: { $0.id == track.id })
+        if selectedID == track.id { selectedID = nil }
+    }
+
     func clear() { tracks.removeAll(); selectedID = nil }
 
     func step(_ direction: Int) -> TrackItem? {
         guard !tracks.isEmpty else { return nil }
         let idx = selectedID.flatMap { id in tracks.firstIndex(where: { $0.id == id }) } ?? 0
         let next = min(max(idx + direction, 0), tracks.count - 1)
+        selectedID = tracks[next].id
+        return tracks[next]
+    }
+
+    /// Linear step that can wrap the queue (repeat-all); nil at the ends
+    /// when not wrapping. Unlike `step`, a missing selection starts before
+    /// the first item (forward) instead of jumping onto it.
+    func peek(_ direction: Int, wrapping: Bool) -> TrackItem? {
+        guard !tracks.isEmpty else { return nil }
+        let idx = selectedID.flatMap { id in tracks.firstIndex(where: { $0.id == id }) }
+            ?? (direction > 0 ? -1 : 0)
+        var next = idx + direction
+        if wrapping { next = (next + tracks.count) % tracks.count }
+        guard tracks.indices.contains(next) else { return nil }
         selectedID = tracks[next].id
         return tracks[next]
     }

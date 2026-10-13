@@ -1,0 +1,96 @@
+# Release a Developer Beta as a GitHub Pre-Release.
+#
+# Two ways to ship:
+#   1. Manual (recommended): Actions → "Release Developer Beta" → Run workflow,
+#      enter a tag like v1.0.2-devbeta.1 and fill in "Describe This Release".
+#      The workflow tags the devbeta branch, builds the DMG, and publishes a
+#      pre-release whose notes are your description + the commit list.
+#   2. Tag push: git tag v1.0.2-devbeta.1 && git push origin v1.0.2-devbeta.1
+#      Publishes a pre-release with auto-generated commit notes only.
+#
+# The in-app beta channel picks these up via the Releases API (prerelease=true).
+name: Release Developer Beta
+
+on:
+  push:
+    tags:
+      - "v*-devbeta*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create on devbeta (e.g. v1.0.2-devbeta.1)"
+        required: true
+      notes:
+        description: "Describe This Release (shown above the commit list)"
+        required: false
+        type: textarea
+
+permissions:
+  contents: write
+
+jobs:
+  beta:
+    runs-on: macos-26
+    steps:
+      - name: Check out devbeta
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: devbeta
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+            git tag "$TAG"
+            git push origin "$TAG"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            git fetch origin tag "$TAG" --no-tags || true
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG"
+
+      - name: Select Xcode 26
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort | tail -1)"
+          if [ -n "$XCODE" ]; then
+            sudo xcode-select -s "$XCODE/Contents/Developer"
+          else
+            echo "No Xcode 26 bundle found, using default toolchain"
+          fi
+          xcodebuild -version
+
+      - name: Build DMG
+        run: VERSION="${{ steps.tag.outputs.version }}" ./scripts/build-dmg.sh release
+
+      - name: Assemble release notes
+        env:
+          DESCRIPTION: ${{ inputs.notes }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PREV="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+          if [ -n "$PREV" ]; then RANGE="$PREV..$TAG"; else RANGE="$TAG"; fi
+          {
+            if [ -n "$DESCRIPTION" ]; then
+              printf '%s\n\n' "$DESCRIPTION"
+            fi
+            echo "## What's Changed"
+            git log "$RANGE" --format='- %s (%h)' --no-merges | head -50
+            echo ""
+            echo "_Pre-release from the \`devbeta\` branch. Enable Settings → General → “Include beta (pre-release) versions” to receive these in-app._"
+          } > body.md
+          cat body.md
+
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          gh release create "$TAG" \
+            --prerelease \
+            --title "$TAG" \
+            --notes-file body.md \
+            dist/*.dmg

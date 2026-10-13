@@ -3,6 +3,34 @@ import AVFoundation
 import Combine
 import AppKit
 
+/// Queue repeat behavior for end-of-track.
+public enum RepeatMode: String, Codable, CaseIterable, Sendable {
+    case off, all, one
+
+    /// Button cycles off → all → one → off.
+    public var next: RepeatMode {
+        switch self {
+        case .off: return .all
+        case .all: return .one
+        case .one: return .off
+        }
+    }
+}
+
+public enum AudioExportFormat: String, CaseIterable, Identifiable, Sendable {
+    case wav, m4a
+
+    public var id: Self { self }
+    public var fileExtension: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .wav: "WAV"
+        case .m4a: "M4A"
+        }
+    }
+}
+
 /// Playback engine: decode + independent tempo/pitch (AVAudioUnitTimePitch) +
 /// 31-band EQ (two chained AVAudioUnitEQ nodes, 16 + 15 bands) + limiter.
 /// Position is tracked on the *source* stream; effective output duration = source / tempo.
@@ -42,6 +70,14 @@ public final class AudioEngine: ObservableObject {
     @Published public var loopEnabled = false
     @Published public var loopA: Double?
     @Published public var loopB: Double?
+
+    // Queue modes.
+    @Published public var shuffleEnabled = false
+    @Published public var repeatMode: RepeatMode = .off
+    /// Fired (on the main actor) when a non-looping segment plays to its
+    /// natural end. The engine is already stopped; the hook decides whether
+    /// to replay or advance the queue.
+    public var onTrackEnded: (() -> Void)?
 
     public var eqIsFlat: Bool {
         eqGains.allSatisfy { abs($0) <= 0.001 }
@@ -88,6 +124,10 @@ public final class AudioEngine: ObservableObject {
         configureEQBands(eqA, start: 0)
         configureEQBands(eqB, start: 16)
         timePitch.rate = 1
+        // Max overlap = best phase-vocoder quality for pitch shifts.
+        // Default is 8; 32 costs more CPU but audibly reduces warble,
+        // metallic ringing, and transient smearing when pitched.
+        timePitch.overlap = 32
         engine = AVAudioEngine()
     }
 
@@ -109,14 +149,22 @@ public final class AudioEngine: ObservableObject {
             band.frequency = EQBands.frequencies[start + i]
             band.bandwidth = 1.0 / 3.0 // ~1/3 octave
             band.gain = 0
-            band.bypass = false
+            // A flat parametric still adds phase shift; bypass it so a flat
+            // EQ is bit-transparent and doesn't stack artifacts on pitched audio.
+            band.bypass = true
         }
     }
 
     private func applyEQ() {
         let gains = eqEnabled ? eqGains : Array(repeating: Float(0), count: EQBands.bandCount)
-        for i in 0..<eqA.bands.count { eqA.bands[i].gain = gains[i] }
-        for i in 0..<eqB.bands.count { eqB.bands[i].gain = gains[16 + i] }
+        for i in 0..<eqA.bands.count {
+            eqA.bands[i].gain = gains[i]
+            eqA.bands[i].bypass = abs(gains[i]) <= 0.001
+        }
+        for i in 0..<eqB.bands.count {
+            eqB.bands[i].gain = gains[16 + i]
+            eqB.bands[i].bypass = abs(gains[16 + i]) <= 0.001
+        }
     }
 
     // MARK: Loading
@@ -300,8 +348,26 @@ public final class AudioEngine: ObservableObject {
         }
     }
 
-    public func setLoopA() { loopA = position }
-    public func setLoopB() { loopB = position }
+    public func setLoopA() {
+        loopA = position
+        autoLoop()
+    }
+
+    public func setLoopB() {
+        loopB = position
+        autoLoop()
+    }
+
+    /// Setting a point completes the pair → the loop switches on by itself.
+    /// A lone or unordered point just parks its marker (loop stays off).
+    private func autoLoop() {
+        guard loopIsValid else {
+            loopEnabled = false
+            return
+        }
+        loopEnabled = true
+        loopToggled() // restart playback inside the loop when already playing
+    }
 
     public func clearLoop() {
         loopA = nil; loopB = nil; loopEnabled = false
@@ -358,14 +424,21 @@ public final class AudioEngine: ObservableObject {
         } else if segmentReversed {
             position = max(0, segmentSourceStart - accumulated)
             if position <= 0.001 {
-                stop()
+                trackEnded()
             }
         } else {
             position = segmentSourceStart + accumulated
             if position >= duration {
-                stop()
+                trackEnded()
             }
         }
+    }
+
+    /// Natural end of a non-looping segment: stop, then let the UI decide
+    /// (replay for repeat-one, advance for repeat-all, stay stopped).
+    private func trackEnded() {
+        stop()
+        onTrackEnded?()
     }
 
     // MARK: Buffer helpers
@@ -424,9 +497,18 @@ public final class AudioEngine: ObservableObject {
 
     // MARK: Offline export
 
-    public func exportWav(to url: URL, tempoPercent: Double, pitchSemitones: Double,
-                          loopOnly: Bool, loopRepeat: Int,
-                          progress: @escaping (Double) -> Void) async throws {
+    /// Cooperative export cancel, set from the progress sheet's Cancel button.
+    public var exportCancelled = false
+
+    public func exportAudio(to url: URL, format exportFormat: AudioExportFormat,
+                            tempoPercent: Double, pitchSemitones: Double,
+                            loopOnly: Bool, loopRepeat: Int,
+                            progress: @escaping (Double) -> Void) async throws {
+        exportCancelled = false
+        guard tempoPercent.isFinite, tempoPercent > 0 else {
+            throw NSError(domain: "MSC", code: 4, userInfo: [NSLocalizedDescriptionKey:
+                "Tempo must be greater than zero"])
+        }
         guard let src = exportSource(loopOnly: loopOnly, loopRepeat: loopRepeat) else {
             throw NSError(domain: "MSC", code: 1, userInfo: [NSLocalizedDescriptionKey: "No audio loaded"])
         }
@@ -436,6 +518,7 @@ public final class AudioEngine: ObservableObject {
         let tp = AVAudioUnitTimePitch()
         tp.rate = Float(tempoPercent / 100)
         tp.pitch = Float(pitchSemitones * 100)
+        tp.overlap = 32
         let eA = AVAudioUnitEQ(numberOfBands: 16)
         let eB = AVAudioUnitEQ(numberOfBands: 15)
         configureEQInto(eA, eB, enabled: eqEnabled)
@@ -456,59 +539,74 @@ public final class AudioEngine: ObservableObject {
         renderEngine.connect(eB, to: lim, format: format)
         renderEngine.connect(lim, to: renderEngine.mainMixerNode, format: format)
         try renderEngine.start()
+        defer { renderEngine.stop() }
 
-        let out = try AVAudioFile(forWriting: url, settings: [
-            AVFormatIDKey: kAudioFormatLinearPCM,
+        var outputSettings: [String: Any] = [
             AVSampleRateKey: format.sampleRate,
             AVNumberOfChannelsKey: format.channelCount,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsNonInterleaved: false,
-        ])
-        // The file converts client buffers to Int16 automatically, but the
-        // buffer format must match the file's processingFormat exactly.
+        ]
+        switch exportFormat {
+        case .wav:
+            outputSettings[AVFormatIDKey] = kAudioFormatLinearPCM
+            outputSettings[AVLinearPCMBitDepthKey] = 16
+            outputSettings[AVLinearPCMIsFloatKey] = false
+            outputSettings[AVLinearPCMIsBigEndianKey] = false
+            outputSettings[AVLinearPCMIsNonInterleaved] = false
+        case .m4a:
+            outputSettings[AVFormatIDKey] = kAudioFormatMPEG4AAC
+            outputSettings[AVEncoderBitRateKey] = 192_000
+        }
+        let out = try AVAudioFile(forWriting: url, settings: outputSettings,
+                                  commonFormat: format.commonFormat,
+                                  interleaved: format.isInterleaved)
+        // The file's client buffer format must match the renderer exactly.
         guard out.processingFormat == format else {
             throw NSError(domain: "MSC", code: 2, userInfo: [NSLocalizedDescriptionKey:
                 "Unsupported audio format (expected \(format), file wants \(out.processingFormat))"])
         }
         let expectedFrames = Double(src.frameLength) / (tempoPercent / 100)
         var rendered: Double = 0
-        var idle = 0
-        let finished = FinishedFlag()
 
-        player.scheduleBuffer(src, at: nil, options: []) {
-            finished.set()
-        }
+        player.scheduleBuffer(src, at: nil, options: []) {}
         player.play()
 
         var done = false
+        var iterations = 0
         while !done {
+            if exportCancelled {
+                exportCancelled = false
+                throw NSError(domain: "MSC", code: 999, userInfo: [NSLocalizedDescriptionKey: "Export cancelled"])
+            }
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)!
             var status: AVAudioEngineManualRenderingStatus = .success
             do {
                 status = try renderEngine.renderOffline(4096, to: buffer)
             } catch {
-                done = true
-                continue
+                throw error
             }
             switch status {
             case .success:
-                idle = 0
                 if buffer.frameLength > 0 { try out.write(from: buffer) }
                 rendered += Double(buffer.frameLength)
                 progress(min(1, rendered / max(expectedFrames, 1)))
+                done = rendered >= expectedFrames
+                // Let the UI repaint the progress bar during long loop exports.
+                iterations += 1
+                if iterations % 16 == 0 { await Task.yield() }
             case .insufficientDataFromInputNode:
-                idle += 1
-                if idle > 4 && finished.value { done = true }
-                if idle > 4096 { done = true }
-            case .error, .cannotDoInCurrentContext:
-                done = true
+                throw NSError(domain: "MSC", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                    "Audio rendering ended before the expected output was complete"])
+            case .error:
+                throw NSError(domain: "MSC", code: 6, userInfo: [NSLocalizedDescriptionKey:
+                    "Audio rendering failed"])
+            case .cannotDoInCurrentContext:
+                await Task.yield()
             @unknown default:
-                done = true
+                throw NSError(domain: "MSC", code: 7, userInfo: [NSLocalizedDescriptionKey:
+                    "Audio rendering returned an unsupported status"])
             }
         }
-        renderEngine.stop()
+        progress(1)
     }
 
     /// Apply EQ settings (bypassing when disabled) to any pair of EQ nodes.
@@ -519,12 +617,14 @@ public final class AudioEngine: ObservableObject {
             eA.bands[i].frequency = EQBands.frequencies[i]
             eA.bands[i].bandwidth = 1.0 / 3.0
             eA.bands[i].gain = gains[i]
+            eA.bands[i].bypass = abs(gains[i]) <= 0.001
         }
         for i in 0..<eB.bands.count {
             eB.bands[i].filterType = .parametric
             eB.bands[i].frequency = EQBands.frequencies[16 + i]
             eB.bands[i].bandwidth = 1.0 / 3.0
             eB.bands[i].gain = gains[16 + i]
+            eB.bands[i].bypass = abs(gains[16 + i]) <= 0.001
         }
     }
 }

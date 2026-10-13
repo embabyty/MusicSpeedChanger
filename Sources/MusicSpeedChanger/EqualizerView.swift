@@ -1,72 +1,61 @@
 import SwiftUI
 import MSCCore
 
-/// Equalizer tab: graphical 31-band editor (20 Hz – 20 kHz).
-/// The curve shows the combined response of the 31 peaking filters;
-/// drag any node vertically to set its band gain.
-struct EqualizerView: View {
+/// Graphical 31-band editor card (20 Hz – 20 kHz), embedded in the Player
+/// under the AB Loop card. The curve shows the combined response of the
+/// 31 peaking filters; drag any node vertically to set its band gain.
+struct EqualizerCard: View {
     @EnvironmentObject var engine: AudioEngine
-
-    let onOpen: () -> Void
-    let onExport: () -> Void
-    let onToggleFiles: () -> Void
-    let exporting: Bool
 
     @State private var selectedPreset = "Flat"
     @State private var activeBand: Int?
     @State private var touchedBand: Int?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Toggle("Enable EQ", isOn: $engine.eqEnabled)
-                    Text("Preset:").foregroundStyle(.secondary)
-                    Picker("Preset", selection: Binding(
-                        get: { selectedPreset },
-                        set: { name in
-                            if let p = EQBands.presets.first(where: { $0.name == name }) {
-                                engine.eqGains = p.gains
-                            }
-                            selectedPreset = name
-                        })) {
-                        ForEach(EQBands.presets, id: \.name) { Text($0.name).tag($0.name) }
-                        Text("Custom").tag("Custom")
-                    }
-                    .labelsHidden()
-                    .frame(width: 150)
-                    Button("Flat") {
-                        engine.eqGains = EQBands.presets[0].gains
-                        selectedPreset = "Flat"
-                    }
-                    .buttonStyle(.glass)
-                    if let band = touchedBand {
-                        Text("\(EQBands.shortLabels[band]) Hz: \(String(format: "%+.1f dB", engine.eqGains[band]))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    } else {
-                        Text("Drag nodes to adjust ±15 dB")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+        Card("Graphical EQ", content: {
+            HStack(spacing: 12) {
+                Toggle("Enable EQ", isOn: $engine.eqEnabled)
+                Text("Preset:").foregroundStyle(.secondary)
+                Picker("Preset", selection: Binding(
+                    get: { selectedPreset },
+                    set: { name in
+                        if let p = EQBands.presets.first(where: { $0.name == name }) {
+                            engine.eqGains = p.gains
+                        }
+                        selectedPreset = name
+                    })) {
+                    ForEach(EQBands.presets, id: \.name) { Text($0.name).tag($0.name) }
+                    Text("Custom").tag("Custom")
                 }
-                EQCurveEditor(gains: engine.eqGains,
-                              sampleRate: engine.currentSampleRate,
-                              activeBand: $activeBand,
-                              onAdjust: { band, gain in
-                                  engine.eqGains[band] = gain
-                                  touchedBand = band
-                                  selectedPreset = "Custom"
-                              })
-                .frame(minHeight: 300)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .labelsHidden()
+                .frame(width: 150)
+                Button("Flat") {
+                    engine.eqGains = EQBands.presets[0].gains
+                    selectedPreset = "Flat"
+                }
+                .buttonStyle(.glass)
+                if let band = touchedBand {
+                    Text("\(EQBands.shortLabels[band]) Hz: \(String(format: "%+.1f dB", engine.eqGains[band]))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                } else {
+                    Text("Drag nodes to adjust ±15 dB")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding()
-        }
-        .navigationTitle("Equalizer")
-        .modifier(LibraryToolbar(exporting: exporting, onOpen: onOpen,
-                                 onExport: onExport, onToggleFiles: onToggleFiles))
+            EQCurveEditor(gains: engine.eqGains,
+                          sampleRate: engine.currentSampleRate,
+                          activeBand: $activeBand,
+                          onAdjust: { band, gain in
+                              engine.eqGains[band] = gain
+                              touchedBand = band
+                              selectedPreset = "Custom"
+                          })
+            .frame(minHeight: 300)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        })
     }
 }
 

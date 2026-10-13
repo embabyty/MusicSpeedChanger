@@ -14,6 +14,8 @@ public final class AppSettings: Codable {
     public var updateFeedUrl: String = AppSettings.defaultFeedUrl
     /// When true, update checks also consider pre-release (beta) versions.
     public var includeBetaUpdates: Bool = false
+    /// When true, the current track and tempo/pitch show on the Discord profile.
+    public var discordRPCEnabled: Bool = true
 
     // Speed & pitch
     public var defaultTempoPercent: Double = 100
@@ -27,6 +29,11 @@ public final class AppSettings: Codable {
     public var showPitchPanel: Bool = true
     public var showLoopPanel: Bool = true
     public var showEqPanel: Bool = true
+    public var editorPreset: EditorPreset = .default
+    public var customControls: [PlayerControl] = PlayerControl.defaultCustom
+    /// Per-card widget sizes, keyed by PlayerControl raw value. Missing =
+    /// the control's defaultCardSize.
+    public var customCardSizes: [String: CardSize] = [:]
     public var waveformPeaks: Int = 1400
     public var clickToSeek: Bool = true
 
@@ -38,6 +45,8 @@ public final class AppSettings: Codable {
     public var rememberFileList: Bool = true
     public var fileListPaths: [String] = []
     public var lastFilePath: String?
+    public var shuffleEnabled: Bool = false
+    public var repeatMode: RepeatMode = .off
 
     // Last effect state (written on exit, restored on startup)
     public var lastTempoPercent: Double = 100
@@ -51,10 +60,11 @@ public final class AppSettings: Codable {
     public var customAccentHex: String = "#2E7D32"
 
     enum CodingKeys: String, CodingKey {
-        case autoCheckUpdates, updateFeedUrl, includeBetaUpdates
+        case autoCheckUpdates, updateFeedUrl, includeBetaUpdates, discordRPCEnabled
         case defaultTempoPercent, defaultPitchSemitones, applyDefaultsOnFileLoad, tempoSliderStep, pitchSliderStep
-        case showTempoPanel, showPitchPanel, showLoopPanel, showEqPanel, waveformPeaks, clickToSeek
+        case showTempoPanel, showPitchPanel, showLoopPanel, showEqPanel, editorPreset, customControls, customCardSizes, waveformPeaks, clickToSeek
         case rememberEffects, rememberFileList, fileListPaths, lastFilePath
+        case shuffleEnabled, repeatMode
         case lastTempoPercent, lastPitchSemitones, lastVolumePercent, lastEqGains, lastEqEnabled
         case useSystemAccent, customAccentHex
     }
@@ -66,6 +76,7 @@ public final class AppSettings: Codable {
         autoCheckUpdates = try c.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
         updateFeedUrl = try c.decodeIfPresent(String.self, forKey: .updateFeedUrl) ?? AppSettings.defaultFeedUrl
         includeBetaUpdates = try c.decodeIfPresent(Bool.self, forKey: .includeBetaUpdates) ?? false
+        discordRPCEnabled = try c.decodeIfPresent(Bool.self, forKey: .discordRPCEnabled) ?? true
         defaultTempoPercent = try c.decodeIfPresent(Double.self, forKey: .defaultTempoPercent) ?? 100
         defaultPitchSemitones = try c.decodeIfPresent(Double.self, forKey: .defaultPitchSemitones) ?? 0
         applyDefaultsOnFileLoad = try c.decodeIfPresent(Bool.self, forKey: .applyDefaultsOnFileLoad) ?? true
@@ -75,12 +86,17 @@ public final class AppSettings: Codable {
         showPitchPanel = try c.decodeIfPresent(Bool.self, forKey: .showPitchPanel) ?? true
         showLoopPanel = try c.decodeIfPresent(Bool.self, forKey: .showLoopPanel) ?? true
         showEqPanel = try c.decodeIfPresent(Bool.self, forKey: .showEqPanel) ?? true
+        editorPreset = try c.decodeIfPresent(EditorPreset.self, forKey: .editorPreset) ?? .default
+        customControls = try c.decodeIfPresent([PlayerControl].self, forKey: .customControls) ?? PlayerControl.defaultCustom
+        customCardSizes = try c.decodeIfPresent([String: CardSize].self, forKey: .customCardSizes) ?? [:]
         waveformPeaks = try c.decodeIfPresent(Int.self, forKey: .waveformPeaks) ?? 1400
         clickToSeek = try c.decodeIfPresent(Bool.self, forKey: .clickToSeek) ?? true
         rememberEffects = try c.decodeIfPresent(Bool.self, forKey: .rememberEffects) ?? true
         rememberFileList = try c.decodeIfPresent(Bool.self, forKey: .rememberFileList) ?? true
         fileListPaths = try c.decodeIfPresent([String].self, forKey: .fileListPaths) ?? []
         lastFilePath = try c.decodeIfPresent(String.self, forKey: .lastFilePath)
+        shuffleEnabled = try c.decodeIfPresent(Bool.self, forKey: .shuffleEnabled) ?? false
+        repeatMode = try c.decodeIfPresent(RepeatMode.self, forKey: .repeatMode) ?? .off
         lastTempoPercent = try c.decodeIfPresent(Double.self, forKey: .lastTempoPercent) ?? 100
         lastPitchSemitones = try c.decodeIfPresent(Double.self, forKey: .lastPitchSemitones) ?? 0
         lastVolumePercent = try c.decodeIfPresent(Double.self, forKey: .lastVolumePercent) ?? 80
@@ -111,6 +127,16 @@ public final class AppSettings: Codable {
             customAccentHex = "#2E7D32"
         }
         if let g = lastEqGains, g.count != EQBands.bandCount { lastEqGains = nil }
+        if customControls.isEmpty { customControls = PlayerControl.defaultCustom }
+    }
+
+    /// Effective widget size for a control (stored override or default).
+    public func cardSize(for control: PlayerControl) -> CardSize {
+        customCardSizes[control.rawValue] ?? control.defaultCardSize
+    }
+
+    public func setCardSize(_ size: CardSize, for control: PlayerControl) {
+        customCardSizes[control.rawValue] = size
     }
 
     public static var fileURL: URL {
