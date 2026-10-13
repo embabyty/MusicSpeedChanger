@@ -1,4 +1,4 @@
-# MusicSpeedChanger (Desktop)
+# MusicSpeedChanger (Windows)
 
 <img src="src/MusicSpeedChanger/Assets/MusicSpeed.png" width="128" alt="MusicSpeedChanger logo" />
 
