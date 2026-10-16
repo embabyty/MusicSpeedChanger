@@ -1,3 +1,5 @@
 .build/
 dist/
 *.o
+Website/node_modules/
+Website/dist/

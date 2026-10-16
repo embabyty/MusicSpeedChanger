@@ -1,0 +1,16 @@
+{
+  "name": "msc-website",
+  "private": true,
+  "version": "1.0.0",
+  "description": "MusicSpeedChanger (macOS) marketing / docs site",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview --port 4173"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
+  }
+}

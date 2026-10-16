@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MusicSpeedChanger — macOS | Slow down music without changing pitch</title>
+    <meta
+      name="description"
+      content="MusicSpeedChanger for macOS: change tempo 50–200% without changing pitch, shift pitch ±12 semitones, AB loop, 31-band EQ, waveform, export to WAV/M4A."
+    />
+    <link rel="icon" type="image/png" href="./logo.png" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="#top">
+        <img src="./logo.png" alt="MusicSpeedChanger logo" width="32" height="32" />
+        <span>MusicSpeedChanger <em>macOS</em></span>
+      </a>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#demo">Try the math</a>
+        <a href="#tech">Tech</a>
+        <a href="#install">Download</a>
+        <a
+          class="gh"
+          href="https://github.com/embabyty/MusicSpeedChangerMacOS"
+          target="_blank"
+          rel="noreferrer"
+          >GitHub</a
+        >
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="kicker">SwiftUI · AVFoundation · macOS 26 Liquid Glass</p>
+          <h1>Slow it down.<br />Keep the pitch.</h1>
+          <p class="lede">
+            MusicSpeedChanger for macOS slows down or speeds up music
+            <strong>without changing pitch</strong>, and shifts key
+            <strong>without changing tempo</strong>. Built for musicians
+            woodshedding tricky sections.
+          </p>
+          <div class="cta-row">
+            <a class="btn primary" id="downloadBtn" href="#install">Download for macOS</a>
+            <a
+              class="btn"
+              href="https://github.com/embabyty/MusicSpeedChangerMacOS"
+              target="_blank"
+              rel="noreferrer"
+              >View source</a
+            >
+          </div>
+          <p class="release-line" id="releaseLine">Checking latest release…</p>
+          <ul class="hero-stats">
+            <li><strong>50–200%</strong><span>tempo, pitch preserved</span></li>
+            <li><strong>±12 st</strong><span>pitch, tempo preserved</span></li>
+            <li><strong>31-band</strong><span>graphic EQ + limiter</span></li>
+          </ul>
+        </div>
+        <div class="hero-art">
+          <img src="./logo.png" alt="MusicSpeedChanger app icon" />
+          <div class="wave-card" aria-hidden="true">
+            <div class="wave-title">AB loop · waveform · 0–10 zoom</div>
+            <canvas id="waveCanvas" width="520" height="140"></canvas>
+            <div class="wave-meta">
+              <span>A 0:12</span><span class="pill">loop ×4</span><span>B 0:31</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <h2>Everything from the mobile app, rebuilt for desktop</h2>
+        <p class="sub">Same layout and feature set as the Windows version, in native SwiftUI.</p>
+        <div class="grid" id="featureGrid"></div>
+      </section>
+
+      <section id="demo" class="section">
+        <h2>Try the math (live TypeScript)</h2>
+        <p class="sub">
+          This is real <code>src/main.ts</code> running in your browser — the same tempo / pitch
+          relationships the app uses.
+        </p>
+        <div class="demo-grid">
+          <div class="card">
+            <h3>Tempo → playing time</h3>
+            <label>
+              Original track length
+              <span class="row">
+                <input id="trackLen" type="text" value="3:45" inputmode="numeric" />
+              </span>
+            </label>
+            <label>
+              Tempo <output id="tempoOut">100%</output>
+              <input id="tempo" type="range" min="50" max="200" step="1" value="100" />
+            </label>
+            <p class="result" id="tempoResult">—</p>
+            <div class="presets" id="tempoPresets"></div>
+          </div>
+          <div class="card">
+            <h3>Pitch → playback ratio</h3>
+            <label>
+              Semitones <output id="semiOut">0.0 st</output>
+              <input id="semi" type="range" min="-12" max="12" step="0.1" value="0" />
+            </label>
+            <p class="result" id="pitchResult">—</p>
+            <p class="hint">
+              ratio = 2<sup>n/12</sup> · e.g. +12 st = 2×, −12 st = ½× frequency.
+              Tempo is unaffected (independent <code>AVAudioUnitTimePitch</code>).
+            </p>
+          </div>
+          <div class="card">
+            <h3>EQ filename tag</h3>
+            <label class="check"><input id="eqOn" type="checkbox" checked /> EQ active</label>
+            <label class="check"><input id="abOn" type="checkbox" checked /> AB loop set (×<input id="loopN" type="number" min="1" max="99" value="4" class="small" />)</label>
+            <p class="result mono" id="fileResult">—</p>
+            <p class="hint">Mirrors the app's export naming: loop count + <code>_eq</code> suffix.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tech" class="section two-col">
+        <div>
+          <h2>Clean DSP chain, no dependencies</h2>
+          <ul class="ticks">
+            <li><code>AVAudioUnitTimePitch</code> — independent tempo / pitch</li>
+            <li>2× chained <code>AVAudioUnitEQ</code> — 31 ISO bands, 20 Hz–20 kHz ±15 dB</li>
+            <li>Apple DynamicsProcessor peak limiter — stops stretch/EQ clipping</li>
+            <li>Same chain for monitoring and WAV / M4A export</li>
+          </ul>
+          <p class="hint">Swift 6 + SwiftUI · macOS 26+ · zero third-party deps.</p>
+        </div>
+        <div class="card mono small">
+          <div class="code-title">Run from source</div>
+          <pre><code>swift build -c release
+swift run MusicSpeedChanger
+
+# .app bundle → dist/
+./scripts/build-app.sh release
+
+# installer DMG → dist/
+./scripts/build-dmg.sh release</code></pre>
+        </div>
+      </section>
+
+      <section id="install" class="section">
+        <h2>Download</h2>
+        <p class="sub">
+          Requires macOS 26+ with Xcode 26+ to build. No account, no network (except the
+          update check), no extra runtimes.
+        </p>
+        <div class="cta-row">
+          <a
+            class="btn primary"
+            href="https://github.com/embabyty/MusicSpeedChangerMacOS/releases"
+            target="_blank"
+            rel="noreferrer"
+            >Get the latest DMG</a
+          >
+          <a
+            class="btn"
+            href="https://github.com/embabyty/MusicSpeedChanger"
+            target="_blank"
+            rel="noreferrer"
+            >Windows version</a
+          >
+        </div>
+        <ol class="steps">
+          <li>Download the <code>.dmg</code> from Releases and drag to Applications.</li>
+          <li>Open MP3 / WAV / M4A / AIFF / FLAC from the Files panel or drag-and-drop.</li>
+          <li>Updates check GitHub Releases on launch (stable + opt-in beta channel).</li>
+        </ol>
+      </section>
+
+      <footer>
+        <span>MusicSpeedChanger (macOS) · MIT-style hobby project by embabyty</span>
+        <a href="https://github.com/embabyty/MusicSpeedChangerMacOS" target="_blank" rel="noreferrer">Repo</a>
+      </footer>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
