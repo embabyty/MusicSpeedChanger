@@ -54,10 +54,28 @@ public final class AppSettings: Codable {
     public var lastVolumePercent: Double = 80
     public var lastEqGains: [Float]?
     public var lastEqEnabled: Bool = true
+    public var lastReverbEnabled: Bool = false
+    public var lastReverbMix: Float = 30
+    public var lastDelayEnabled: Bool = false
+    public var lastDelayMix: Float = 30
+    public var lastDelayTime: Double = 0.35
+    public var lastDelayFeedback: Float = 40
+    public var lastDistortionEnabled: Bool = false
+    public var lastDistortionMix: Float = 50
+    public var lastDistortionGain: Float = 0
 
     // Appearance
     public var useSystemAccent: Bool = true
     public var customAccentHex: String = "#2E7D32"
+
+    // Patreon supporter gate (Beta builds)
+    public var patreonSupporterEmail: String?
+    public var patreonVerifiedUntil: Date?
+    public var patreonHasEAFPlus: Bool = false
+    public var patreonHasEAFBasic: Bool = false
+
+    /// Last app version that showed the What's New splash. Nil = never shown.
+    public var lastSeenVersion: String?
 
     enum CodingKeys: String, CodingKey {
         case autoCheckUpdates, updateFeedUrl, includeBetaUpdates, discordRPCEnabled
@@ -66,7 +84,11 @@ public final class AppSettings: Codable {
         case rememberEffects, rememberFileList, fileListPaths, lastFilePath
         case shuffleEnabled, repeatMode
         case lastTempoPercent, lastPitchSemitones, lastVolumePercent, lastEqGains, lastEqEnabled
+        case lastReverbEnabled, lastReverbMix, lastDelayEnabled, lastDelayMix, lastDelayTime, lastDelayFeedback
+        case lastDistortionEnabled, lastDistortionMix, lastDistortionGain
         case useSystemAccent, customAccentHex
+        case patreonSupporterEmail, patreonVerifiedUntil, patreonHasEAFPlus, patreonHasEAFBasic
+        case lastSeenVersion
     }
 
     public init() {}
@@ -102,8 +124,22 @@ public final class AppSettings: Codable {
         lastVolumePercent = try c.decodeIfPresent(Double.self, forKey: .lastVolumePercent) ?? 80
         lastEqGains = try c.decodeIfPresent([Float].self, forKey: .lastEqGains)
         lastEqEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastEqEnabled) ?? true
+        lastReverbEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastReverbEnabled) ?? false
+        lastReverbMix = try c.decodeIfPresent(Float.self, forKey: .lastReverbMix) ?? 30
+        lastDelayEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastDelayEnabled) ?? false
+        lastDelayMix = try c.decodeIfPresent(Float.self, forKey: .lastDelayMix) ?? 30
+        lastDelayTime = try c.decodeIfPresent(Double.self, forKey: .lastDelayTime) ?? 0.35
+        lastDelayFeedback = try c.decodeIfPresent(Float.self, forKey: .lastDelayFeedback) ?? 40
+        lastDistortionEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastDistortionEnabled) ?? false
+        lastDistortionMix = try c.decodeIfPresent(Float.self, forKey: .lastDistortionMix) ?? 50
+        lastDistortionGain = try c.decodeIfPresent(Float.self, forKey: .lastDistortionGain) ?? 0
         useSystemAccent = try c.decodeIfPresent(Bool.self, forKey: .useSystemAccent) ?? true
         customAccentHex = try c.decodeIfPresent(String.self, forKey: .customAccentHex) ?? "#2E7D32"
+        patreonSupporterEmail = try c.decodeIfPresent(String.self, forKey: .patreonSupporterEmail)
+        patreonVerifiedUntil = try c.decodeIfPresent(Date.self, forKey: .patreonVerifiedUntil)
+        patreonHasEAFPlus = try c.decodeIfPresent(Bool.self, forKey: .patreonHasEAFPlus) ?? false
+        patreonHasEAFBasic = try c.decodeIfPresent(Bool.self, forKey: .patreonHasEAFBasic) ?? false
+        lastSeenVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenVersion)
         clamp()
     }
 

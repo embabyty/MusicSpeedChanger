@@ -7,25 +7,55 @@ struct MusicSpeedChangerApp: App {
     @StateObject private var tracks = TrackList()
     @StateObject private var settings = SettingsStore()
     @StateObject private var discord = DiscordPresenceController()
+    @StateObject private var patreon = PatreonAuth()
+    @State private var gatePassed = false
+    @State private var showWhatsNew: Bool = {
+        WhatsNew.shouldShow(current: UpdateChecker.currentVersion,
+                            lastSeen: AppSettings.load().lastSeenVersion)
+    }()
 
     var body: some Scene {
         WindowGroup("Music Speed Changer") {
-            ContentView()
-                .environmentObject(engine)
-                .environmentObject(tracks)
-                .environmentObject(settings)
-                .preferredColorScheme(.dark)
-                .frame(minWidth: 900, minHeight: 720)
-                .onAppear {
-                    NSApp.activate(ignoringOtherApps: true)
-                    discord.configure(engine: engine, settings: settings)
-                    if settings.settings.autoCheckUpdates {
-                        UpdateChecker.checkIfNewer()
+            Group {
+                if showWhatsNew, let current = UpdateChecker.currentVersion {
+                    SplashView(version: "Version \(current)",
+                               notes: WhatsNew.notes(for: current))
+                    {
+                        let s = AppSettings.load()
+                        s.lastSeenVersion = current
+                        s.save()
+                        settings.settings.lastSeenVersion = current
+                        settings.persist()
+                        showWhatsNew = false
                     }
+                } else if PatreonAuth.gateRequired, !gatePassed {
+                    PatreonGateView(auth: patreon) {
+                        gatePassed = true
+                    }
+                    .onAppear {
+                        if patreon.restoreCached() {
+                            gatePassed = true
+                        }
+                    }
+                } else {
+                    ContentView()
+                        .environmentObject(engine)
+                        .environmentObject(tracks)
+                        .environmentObject(settings)
+                        .preferredColorScheme(.dark)
+                        .frame(minWidth: 900, minHeight: 720)
+                        .onAppear {
+                            NSApp.activate(ignoringOtherApps: true)
+                            discord.configure(engine: engine, settings: settings)
+                            if settings.settings.autoCheckUpdates {
+                                UpdateChecker.checkIfNewer()
+                            }
+                        }
+                        .onDisappear {
+                            settings.persistLastEffects(engine: engine)
+                        }
                 }
-                .onDisappear {
-                    settings.persistLastEffects(engine: engine)
-                }
+            }
         }
         .defaultSize(width: 1280, height: 860)
         .defaultPosition(.center)
@@ -66,6 +96,15 @@ final class SettingsStore: ObservableObject {
         settings.lastVolumePercent = engine.volumePercent
         settings.lastEqGains = engine.eqGains
         settings.lastEqEnabled = engine.eqEnabled
+        settings.lastReverbEnabled = engine.reverbEnabled
+        settings.lastReverbMix = engine.reverbMix
+        settings.lastDelayEnabled = engine.delayEnabled
+        settings.lastDelayMix = engine.delayMix
+        settings.lastDelayTime = engine.delayTime
+        settings.lastDelayFeedback = engine.delayFeedback
+        settings.lastDistortionEnabled = engine.distortionEnabled
+        settings.lastDistortionMix = engine.distortionMix
+        settings.lastDistortionGain = engine.distortionGain
         if settings.rememberFileList {
             settings.fileListPaths = tracksPathCache
         }

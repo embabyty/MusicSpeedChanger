@@ -84,7 +84,8 @@ public enum PlayerControl: String, CaseIterable, Codable, Identifiable, Sendable
     /// "not available on Mac yet" note inside its preset.
     public var isSupportedOnMac: Bool {
         switch self {
-        case .waveform, .reverse, .tempo, .pitch, .loop, .equalizer, .volume:
+        case .waveform, .reverse, .tempo, .pitch, .loop, .equalizer, .volume,
+             .reverb, .delay, .distortion:
             return true
         default:
             return false

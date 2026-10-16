@@ -32,7 +32,8 @@ public enum AudioExportFormat: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Playback engine: decode + independent tempo/pitch (AVAudioUnitTimePitch) +
-/// 31-band EQ (two chained AVAudioUnitEQ nodes, 16 + 15 bands) + limiter.
+/// 31-band EQ (two chained AVAudioUnitEQ nodes, 16 + 15 bands) +
+/// distortion → delay → reverb inserts + limiter.
 /// Position is tracked on the *source* stream; effective output duration = source / tempo.
 @MainActor
 public final class AudioEngine: ObservableObject {
@@ -58,6 +59,18 @@ public final class AudioEngine: ObservableObject {
     }
     @Published public var reverseEnabled = false
     @Published public var eqEnabled = true { didSet { applyEQ() } }
+    @Published public var reverbEnabled = false { didSet { applyReverb() } }
+    @Published public var reverbMix: Float = 30 { didSet { applyReverb() } }
+    @Published public var delayEnabled = false { didSet { applyDelay() } }
+    @Published public var delayMix: Float = 30 { didSet { applyDelay() } }
+    /// Seconds, 0…2 (AVAudioUnitDelay range).
+    @Published public var delayTime: Double = 0.35 { didSet { applyDelay() } }
+    /// Percent, 0…100.
+    @Published public var delayFeedback: Float = 40 { didSet { applyDelay() } }
+    @Published public var distortionEnabled = false { didSet { applyDistortion() } }
+    @Published public var distortionMix: Float = 50 { didSet { applyDistortion() } }
+    /// dB, -80…20 (AVAudioUnitDistortion preGain).
+    @Published public var distortionGain: Float = 0 { didSet { applyDistortion() } }
     @Published public var eqGains: [Float] = Array(repeating: 0, count: EQBands.bandCount) {
         didSet {
             if eqGains.count != EQBands.bandCount {
@@ -104,6 +117,9 @@ public final class AudioEngine: ObservableObject {
     private let timePitch = AVAudioUnitTimePitch()
     private let eqA = AVAudioUnitEQ(numberOfBands: 16)
     private let eqB = AVAudioUnitEQ(numberOfBands: 15)
+    private let distortion = AVAudioUnitDistortion()
+    private let delay = AVAudioUnitDelay()
+    private let reverb = AVAudioUnitReverb()
     private let limiter: AVAudioUnitEffect
 
     private var sourceBuffer: AVAudioPCMBuffer?
@@ -128,6 +144,17 @@ public final class AudioEngine: ObservableObject {
         // Default is 8; 32 costs more CPU but audibly reduces warble,
         // metallic ringing, and transient smearing when pitched.
         timePitch.overlap = 32
+        // Digital inserts, Audiotool-style: distortion → time effects → limiter.
+        // All wet/dry at 0 when disabled so bypass is click-free and transparent.
+        distortion.loadFactoryPreset(.multiDistortedCubed)
+        distortion.preGain = 0
+        distortion.wetDryMix = 0
+        delay.delayTime = 0.35
+        delay.feedback = 40
+        delay.lowPassCutoff = 15000
+        delay.wetDryMix = 0
+        reverb.loadFactoryPreset(.mediumHall)
+        reverb.wetDryMix = 0
         engine = AVAudioEngine()
     }
 
@@ -167,6 +194,28 @@ public final class AudioEngine: ObservableObject {
         }
     }
 
+    /// Wet/dry 0 when off = bit-transparent dry pass, no clicks from rewiring.
+    private func applyReverb() {
+        reverb.wetDryMix = reverbEnabled ? min(max(reverbMix, 0), 100) : 0
+    }
+
+    private func applyDelay() {
+        delay.delayTime = min(max(delayTime, 0), 2)
+        delay.feedback = min(max(delayFeedback, 0), 100)
+        delay.wetDryMix = delayEnabled ? min(max(delayMix, 0), 100) : 0
+    }
+
+    private func applyDistortion() {
+        distortion.preGain = min(max(distortionGain, -80), 20)
+        distortion.wetDryMix = distortionEnabled ? min(max(distortionMix, 0), 100) : 0
+    }
+
+    public var effectsActive: Bool {
+        (reverbEnabled && reverbMix > 0.001)
+            || (delayEnabled && delayMix > 0.001)
+            || (distortionEnabled && distortionMix > 0.001)
+    }
+
     // MARK: Loading
 
     public func load(url: URL) throws {
@@ -190,6 +239,9 @@ public final class AudioEngine: ObservableObject {
         isLoaded = true
         buildGraph()
         applyEQ()
+        applyReverb()
+        applyDelay()
+        applyDistortion()
     }
 
     /// Rebuild the graph for the loaded file. Nodes are detached from the
@@ -199,7 +251,7 @@ public final class AudioEngine: ObservableObject {
         guard let format else { return }
         if let old = engine {
             old.stop()
-            for node: AVAudioNode in [player, timePitch, eqA, eqB, limiter] {
+            for node: AVAudioNode in [player, timePitch, eqA, eqB, distortion, delay, reverb, limiter] {
                 if node.engine === old { old.detach(node) }
             }
         }
@@ -208,11 +260,17 @@ public final class AudioEngine: ObservableObject {
         engine.attach(timePitch)
         engine.attach(eqA)
         engine.attach(eqB)
+        engine.attach(distortion)
+        engine.attach(delay)
+        engine.attach(reverb)
         engine.attach(limiter)
         engine.connect(player, to: timePitch, format: format)
         engine.connect(timePitch, to: eqA, format: format)
         engine.connect(eqA, to: eqB, format: format)
-        engine.connect(eqB, to: limiter, format: format)
+        engine.connect(eqB, to: distortion, format: format)
+        engine.connect(distortion, to: delay, format: format)
+        engine.connect(delay, to: reverb, format: format)
+        engine.connect(reverb, to: limiter, format: format)
         engine.connect(limiter, to: engine.mainMixerNode, format: format)
         engine.mainMixerNode.outputVolume = Float(volumePercent / 100)
         try? engine.start()
@@ -522,6 +580,18 @@ public final class AudioEngine: ObservableObject {
         let eA = AVAudioUnitEQ(numberOfBands: 16)
         let eB = AVAudioUnitEQ(numberOfBands: 15)
         configureEQInto(eA, eB, enabled: eqEnabled)
+        let dist = AVAudioUnitDistortion()
+        dist.loadFactoryPreset(.multiDistortedCubed)
+        dist.preGain = distortionEnabled ? min(max(distortionGain, -80), 20) : 0
+        dist.wetDryMix = distortionEnabled ? min(max(distortionMix, 0), 100) : 0
+        let dly = AVAudioUnitDelay()
+        dly.delayTime = min(max(delayTime, 0), 2)
+        dly.feedback = min(max(delayFeedback, 0), 100)
+        dly.lowPassCutoff = 15000
+        dly.wetDryMix = delayEnabled ? min(max(delayMix, 0), 100) : 0
+        let rev = AVAudioUnitReverb()
+        rev.loadFactoryPreset(.mediumHall)
+        rev.wetDryMix = reverbEnabled ? min(max(reverbMix, 0), 100) : 0
         let lim = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
             componentType: kAudioUnitType_Effect,
             componentSubType: kAudioUnitSubType_DynamicsProcessor,
@@ -531,12 +601,18 @@ public final class AudioEngine: ObservableObject {
         renderEngine.attach(tp)
         renderEngine.attach(eA)
         renderEngine.attach(eB)
+        renderEngine.attach(dist)
+        renderEngine.attach(dly)
+        renderEngine.attach(rev)
         renderEngine.attach(lim)
         try renderEngine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
         renderEngine.connect(player, to: tp, format: format)
         renderEngine.connect(tp, to: eA, format: format)
         renderEngine.connect(eA, to: eB, format: format)
-        renderEngine.connect(eB, to: lim, format: format)
+        renderEngine.connect(eB, to: dist, format: format)
+        renderEngine.connect(dist, to: dly, format: format)
+        renderEngine.connect(dly, to: rev, format: format)
+        renderEngine.connect(rev, to: lim, format: format)
         renderEngine.connect(lim, to: renderEngine.mainMixerNode, format: format)
         try renderEngine.start()
         defer { renderEngine.stop() }

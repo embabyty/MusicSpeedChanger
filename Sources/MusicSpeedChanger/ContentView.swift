@@ -170,6 +170,15 @@ struct ContentView: View {
             engine.volumePercent = settings.settings.lastVolumePercent
             if let gains = settings.settings.lastEqGains { engine.eqGains = gains }
             engine.eqEnabled = settings.settings.lastEqEnabled
+            engine.reverbEnabled = settings.settings.lastReverbEnabled
+            engine.reverbMix = settings.settings.lastReverbMix
+            engine.delayEnabled = settings.settings.lastDelayEnabled
+            engine.delayMix = settings.settings.lastDelayMix
+            engine.delayTime = settings.settings.lastDelayTime
+            engine.delayFeedback = settings.settings.lastDelayFeedback
+            engine.distortionEnabled = settings.settings.lastDistortionEnabled
+            engine.distortionMix = settings.settings.lastDistortionMix
+            engine.distortionGain = settings.settings.lastDistortionGain
         } else if settings.settings.applyDefaultsOnFileLoad {
             engine.tempoPercent = settings.settings.defaultTempoPercent
             engine.pitchSemitones = settings.settings.defaultPitchSemitones
@@ -328,6 +337,7 @@ struct ContentView: View {
             let base = (name as NSString).deletingPathExtension
             return "\(base)_\(Int(engine.tempoPercent))pct_\(pitch >= 0 ? "+" : "")\(String(format: "%.1f", pitch))st"
                 + (engine.eqEnabled && !engine.eqIsFlat ? "_eq" : "")
+                + (engine.effectsActive ? "_fx" : "")
         } ?? "track"
         saveFileName = SaveDialogSheet.sanitizeFileName(suggested)
         saveLoopOnly = hasLoop

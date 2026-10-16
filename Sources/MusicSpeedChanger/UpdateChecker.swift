@@ -41,8 +41,20 @@ enum UpdateChecker {
                 guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
                     return .failed("Unexpected response from the releases feed.")
                 }
-                // Newest first; skip drafts. First hit may be a stable or a beta.
-                guard let obj = arr.first(where: { ($0["draft"] as? Bool) != true }),
+                // Newest first; skip drafts and channels the user isn't
+                // entitled to (devbeta needs EAF+, publicbeta needs Basic+).
+                let plus = PatreonAuth.cachedEAFPlus() != nil
+                let basic = PatreonAuth.cachedBasic() != nil
+                guard let obj = arr.first(where: {
+                    guard ($0["draft"] as? Bool) != true,
+                          let tag = $0["tag_name"] as? String
+                    else { return false }
+                    switch PatreonConfig.Channel.of(tag) {
+                    case .stable: return true
+                    case .devbeta: return plus
+                    case .publicbeta: return basic
+                    }
+                }),
                       let tag = obj["tag_name"] as? String
                 else {
                     // No published releases yet.
@@ -104,7 +116,9 @@ enum UpdateChecker {
         guard currentVersion != nil else { return }
         let settings = AppSettings.load()
         let feed = settings.updateFeedUrl
-        let includeBeta = settings.includeBetaUpdates
+        // Beta updates are a perk: without a fresh EAF Basic (or better)
+        // verification the check stays on the stable channel.
+        let includeBeta = settings.includeBetaUpdates && PatreonAuth.betaUpdatesEntitled
         Task {
             let outcome = await check(feed: feed, includeBeta: includeBeta)
             if case .available(let release) = outcome {

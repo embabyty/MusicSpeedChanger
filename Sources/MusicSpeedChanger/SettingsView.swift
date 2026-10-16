@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var checking = false
     @State private var updateStatus = ""
     @State private var pendingRelease: UpdateChecker.Release?
+    @StateObject private var patreon = PatreonAuth()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -90,13 +91,14 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            supporterGroup
             PrefGroup {
                 PrefRow("Updates:") {
                     Toggle("Automatically check for updates on startup",
                            isOn: binding(\.autoCheckUpdates))
                     Toggle("Include beta (pre-release) versions",
                            isOn: binding(\.includeBetaUpdates))
-                    PrefNote("When on, the app checks this project's GitHub releases on launch, betas included.")
+                    PrefNote("When on, the app checks this project's GitHub releases on launch, betas included. Beta updates need verification above (EAF Basic for public betas, EAF+ for dev betas).")
                 }
                 PrefRow("Discord:") {
                     Toggle("Show listening activity in Discord (Rich Presence)",
@@ -208,6 +210,60 @@ struct SettingsView: View {
 
     // MARK: - Helpers
 
+    /// Supporter row shown on every build: beta builds gate on it at launch,
+    /// stable builds use it to unlock devbeta updates.
+    @ViewBuilder
+    private var supporterGroup: some View {
+        PrefGroup {
+            PrefRow("Supporter:") {
+                if let email = PatreonAuth.cachedEAFPlus() {
+                    Text("EAF+ verified — \(email)")
+                        .foregroundStyle(.secondary)
+                    Button("Sign out") {
+                        patreon.signOut()
+                        settingsStore.settings.patreonSupporterEmail = nil
+                        settingsStore.settings.patreonVerifiedUntil = nil
+                        settingsStore.settings.patreonHasEAFPlus = false
+                        settingsStore.settings.patreonHasEAFBasic = false
+                        settingsStore.persist()
+                    }
+                } else if let email = PatreonAuth.cachedBasic() {
+                    Text("EAF Basic verified — \(email)")
+                        .foregroundStyle(.secondary)
+                    Button("Sign out") {
+                        patreon.signOut()
+                        settingsStore.settings.patreonSupporterEmail = nil
+                        settingsStore.settings.patreonVerifiedUntil = nil
+                        settingsStore.settings.patreonHasEAFPlus = false
+                        settingsStore.settings.patreonHasEAFBasic = false
+                        settingsStore.persist()
+                    }
+                } else {
+                    Text("Not linked")
+                        .foregroundStyle(.secondary)
+                    if PatreonConfig.isConfigured, !PatreonAuth.gateRequired {
+                        Button("Verify EAF+ status") { patreon.startSignIn() }
+                    }
+                    Button("Get EAF+") {
+                        NSWorkspace.shared.open(PatreonConfig.pageURL)
+                    }
+                }
+            }
+            switch patreon.status {
+            case .signingIn(let message):
+                PrefNote(message)
+            case .failed(let message):
+                PrefNote("EAF+ check: \(message)")
+            case .verified:
+                PrefNote("Verified — beta updates for your tier are now included.")
+            default:
+                PrefNote(PatreonAuth.gateRequired
+                    ? "This beta requires an active EAF Basic (publicbeta) or EAF+ (devbeta) membership."
+                    : "Beta updates are a perk: EAF Basic for public betas, EAF+ for dev betas. Verify to include them.")
+            }
+        }
+    }
+
     private func binding<Value>(_ keyPath: ReferenceWritableKeyPath<AppSettings, Value>) -> Binding<Value> {
         Binding(get: { settingsStore.settings[keyPath: keyPath] },
                 set: { settingsStore.settings[keyPath: keyPath] = $0; settingsStore.persist() })
@@ -228,6 +284,7 @@ struct SettingsView: View {
         updateStatus = "Checking…"
         let feed = settingsStore.settings.updateFeedUrl
         let includeBeta = settingsStore.settings.includeBetaUpdates
+            && PatreonAuth.betaUpdatesEntitled
         Task {
             let outcome = await UpdateChecker.check(feed: feed, includeBeta: includeBeta)
             switch outcome {

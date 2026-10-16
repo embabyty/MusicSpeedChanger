@@ -263,7 +263,7 @@ struct PlayerView: View {
     }
 
     /// Whether a control renders at all: panel toggles apply in normal
-    /// mode, but jiggle mode shows everything so it can be edited.
+    /// mode, and jiggle mode shows everything else so it can be edited.
     private func shouldShow(_ control: PlayerControl) -> Bool {
         guard has(control) else { return false }
         if isEditingCards { return true }
@@ -314,6 +314,12 @@ struct PlayerView: View {
             editableChrome(control: control, size: size) { reverseCard }
         case .volume:
             editableChrome(control: control, size: size) { volumeCard }
+        case .reverb:
+            editableChrome(control: control, size: size) { reverbCard }
+        case .delay:
+            editableChrome(control: control, size: size) { delayCard }
+        case .distortion:
+            editableChrome(control: control, size: size) { distortionCard }
         default:
             editableChrome(control: control, size: size) { soonCard(for: control) }
         }
@@ -479,6 +485,71 @@ struct PlayerView: View {
             }
             .disabled(!engine.isLoaded || isEditingCards)
         }
+    }
+
+    private var reverbCard: some View {
+        Card("Reverb (room)") {
+            Toggle("Enable", isOn: $engine.reverbEnabled)
+            HStack {
+                Text("Mix")
+                Slider(value: Binding(get: { Double(engine.reverbMix) },
+                                      set: { engine.reverbMix = Float($0) }), in: 0...100)
+                Text(String(format: "%.0f%%", engine.reverbMix))
+                    .frame(width: 44, alignment: .trailing).monospacedDigit()
+            }
+            .disabled(!engine.reverbEnabled)
+        }
+        .disabled(!engine.isLoaded || isEditingCards)
+    }
+
+    private var delayCard: some View {
+        Card("Delay (echo)") {
+            Toggle("Enable", isOn: $engine.delayEnabled)
+            HStack {
+                Text("Mix")
+                Slider(value: Binding(get: { Double(engine.delayMix) },
+                                      set: { engine.delayMix = Float($0) }), in: 0...100)
+                Text(String(format: "%.0f%%", engine.delayMix))
+                    .frame(width: 44, alignment: .trailing).monospacedDigit()
+            }
+            HStack {
+                Text("Time")
+                Slider(value: $engine.delayTime, in: 0...2)
+                Text(String(format: "%.2fs", engine.delayTime))
+                    .frame(width: 52, alignment: .trailing).monospacedDigit()
+            }
+            HStack {
+                Text("Echo")
+                Slider(value: Binding(get: { Double(engine.delayFeedback) },
+                                      set: { engine.delayFeedback = Float($0) }), in: 0...100)
+                Text(String(format: "%.0f%%", engine.delayFeedback))
+                    .frame(width: 44, alignment: .trailing).monospacedDigit()
+            }
+            .disabled(!engine.delayEnabled)
+        }
+        .disabled(!engine.isLoaded || isEditingCards)
+    }
+
+    private var distortionCard: some View {
+        Card("Distortion (drive)") {
+            Toggle("Enable", isOn: $engine.distortionEnabled)
+            HStack {
+                Text("Mix")
+                Slider(value: Binding(get: { Double(engine.distortionMix) },
+                                      set: { engine.distortionMix = Float($0) }), in: 0...100)
+                Text(String(format: "%.0f%%", engine.distortionMix))
+                    .frame(width: 44, alignment: .trailing).monospacedDigit()
+            }
+            HStack {
+                Text("Drive")
+                Slider(value: Binding(get: { Double(engine.distortionGain) },
+                                      set: { engine.distortionGain = Float($0) }), in: -20...20)
+                Text(String(format: "%+.0fdB", engine.distortionGain))
+                    .frame(width: 52, alignment: .trailing).monospacedDigit()
+            }
+            .disabled(!engine.distortionEnabled)
+        }
+        .disabled(!engine.isLoaded || isEditingCards)
     }
 
     private func soonCard(for control: PlayerControl) -> some View {
