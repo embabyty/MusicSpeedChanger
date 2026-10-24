@@ -1,2 +1,2 @@
-# MusicSpeedChangerMacOS
-Similar to the Windows Version
+# MusicSpeedChanger
+For Windows and macOS
