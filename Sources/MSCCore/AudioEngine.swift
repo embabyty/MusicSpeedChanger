@@ -32,7 +32,7 @@ public enum AudioExportFormat: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Playback engine: decode + independent tempo/pitch (AVAudioUnitTimePitch) +
-/// 31-band EQ (two chained AVAudioUnitEQ nodes, 16 + 15 bands) +
+/// 32-band EQ (two chained AVAudioUnitEQ nodes, 16 + 16 bands) +
 /// distortion → delay → reverb inserts + limiter.
 /// Position is tracked on the *source* stream; effective output duration = source / tempo.
 @MainActor
@@ -71,6 +71,15 @@ public final class AudioEngine: ObservableObject {
     @Published public var distortionMix: Float = 50 { didSet { applyDistortion() } }
     /// dB, -80…20 (AVAudioUnitDistortion preGain).
     @Published public var distortionGain: Float = 0 { didSet { applyDistortion() } }
+    @Published public var stereoWidthEnabled = false { didSet { updateStereoBuffers() } }
+    @Published public var stereoWidthPercent: Double = 100 { didSet { updateStereoBuffers() } }
+    @Published public var vocalEnhancerEnabled = false { didSet { applyVocalEnhancer() } }
+    @Published public var scrubberEQEnabled = false { didSet { applyScrubberEQ() } }
+    @Published public var scrubberLowGain: Float = 0 { didSet { applyScrubberEQ() } }
+    @Published public var scrubberMidGain: Float = 0 { didSet { applyScrubberEQ() } }
+    @Published public var scrubberHighGain: Float = 0 { didSet { applyScrubberEQ() } }
+    @Published public var limiterEnabled = true { didSet { applyLimiter() } }
+    @Published public var limiterInputGain: Float = 0 { didSet { applyLimiter() } }
     @Published public var eqGains: [Float] = Array(repeating: 0, count: EQBands.bandCount) {
         didSet {
             if eqGains.count != EQBands.bandCount {
@@ -116,7 +125,9 @@ public final class AudioEngine: ObservableObject {
     private let player = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
     private let eqA = AVAudioUnitEQ(numberOfBands: 16)
-    private let eqB = AVAudioUnitEQ(numberOfBands: 15)
+    private let eqB = AVAudioUnitEQ(numberOfBands: 16)
+    private let scrubberEQ = AVAudioUnitEQ(numberOfBands: 3)
+    private let vocalEQ = AVAudioUnitEQ(numberOfBands: 4)
     private let distortion = AVAudioUnitDistortion()
     private let delay = AVAudioUnitDelay()
     private let reverb = AVAudioUnitReverb()
@@ -124,6 +135,8 @@ public final class AudioEngine: ObservableObject {
 
     private var sourceBuffer: AVAudioPCMBuffer?
     private var cachedReversed: AVAudioPCMBuffer?
+    private var stereoBuffer: AVAudioPCMBuffer?
+    private var cachedStereoReversed: AVAudioPCMBuffer?
     private var format: AVAudioFormat?
 
     // Position tracking (source seconds)
@@ -136,9 +149,10 @@ public final class AudioEngine: ObservableObject {
     private var segmentReversed = false
 
     public init() {
-        limiter = AudioEngine.makeDynamicsProcessor()
+        limiter = AudioEngine.makePeakLimiter()
         configureEQBands(eqA, start: 0)
         configureEQBands(eqB, start: 16)
+        configureUtilityEQs()
         timePitch.rate = 1
         // Max overlap = best phase-vocoder quality for pitch shifts.
         // Default is 8; 32 costs more CPU but audibly reduces warble,
@@ -155,14 +169,15 @@ public final class AudioEngine: ObservableObject {
         delay.wetDryMix = 0
         reverb.loadFactoryPreset(.mediumHall)
         reverb.wetDryMix = 0
+        applyLimiter()
         engine = AVAudioEngine()
     }
 
-    /// Apple's AUDynamicsProcessor as an AVAudioUnitEffect (transparent peak limiter).
-    private static func makeDynamicsProcessor() -> AVAudioUnitEffect {
+    /// Apple's peak limiter as an AVAudioUnitEffect.
+    private static func makePeakLimiter() -> AVAudioUnitEffect {
         let desc = AudioComponentDescription(
             componentType: kAudioUnitType_Effect,
-            componentSubType: kAudioUnitSubType_DynamicsProcessor,
+            componentSubType: kAudioUnitSubType_PeakLimiter,
             componentManufacturer: kAudioUnitManufacturer_Apple,
             componentFlags: 0,
             componentFlagsMask: 0)
@@ -210,10 +225,65 @@ public final class AudioEngine: ObservableObject {
         distortion.wetDryMix = distortionEnabled ? min(max(distortionMix, 0), 100) : 0
     }
 
+    private func configureUtilityEQs() {
+        for (i, band) in scrubberEQ.bands.enumerated() {
+            band.filterType = i == 0 ? .lowShelf : (i == 2 ? .highShelf : .parametric)
+            band.frequency = [120, 1000, 8000][i]
+            band.bandwidth = 1
+            band.gain = 0
+            band.bypass = true
+        }
+        for (i, band) in vocalEQ.bands.enumerated() {
+            band.filterType = i == 0 ? .highPass : (i == 3 ? .highShelf : .parametric)
+            band.frequency = [90, 250, 3200, 10000][i]
+            band.bandwidth = 1
+            band.gain = [0, -1.5, 3, 1.5][i]
+            band.bypass = true
+        }
+    }
+
+    private func applyScrubberEQ() {
+        let gains = [scrubberLowGain, scrubberMidGain, scrubberHighGain]
+        for i in 0..<scrubberEQ.bands.count {
+            let gain = min(max(gains[i], -12), 12)
+            scrubberEQ.bands[i].gain = gain
+            scrubberEQ.bands[i].bypass = !scrubberEQEnabled || abs(gain) <= 0.001
+        }
+    }
+
+    private func applyVocalEnhancer() {
+        for band in vocalEQ.bands { band.bypass = !vocalEnhancerEnabled }
+    }
+
+    private func applyLimiter() {
+        limiter.auAudioUnit.shouldBypassEffect = !limiterEnabled
+        limiter.auAudioUnit.parameterTree?
+            .parameter(withAddress: AUParameterAddress(kLimiterParam_PreGain))?.value =
+            min(max(limiterInputGain, 0), 12)
+    }
+
+    /// Mid/side gain changes width without changing the center signal.
+    private func updateStereoBuffers() {
+        guard let sourceBuffer else { return }
+        let width = stereoWidthEnabled ? min(max(stereoWidthPercent / 100, 0), 2) : 1
+        if abs(width - 1) < 0.0001 {
+            stereoBuffer = sourceBuffer
+            cachedStereoReversed = cachedReversed
+        } else {
+            stereoBuffer = Self.widthAdjusted(sourceBuffer, width: Float(width))
+            if let stereoBuffer { cachedStereoReversed = Self.reversedBuffer(stereoBuffer) }
+        }
+        if isPlaying { play() }
+    }
+
     public var effectsActive: Bool {
         (reverbEnabled && reverbMix > 0.001)
             || (delayEnabled && delayMix > 0.001)
             || (distortionEnabled && distortionMix > 0.001)
+            || (stereoWidthEnabled && abs(stereoWidthPercent - 100) > 0.001)
+            || vocalEnhancerEnabled
+            || (scrubberEQEnabled && (abs(scrubberLowGain) > 0.001 || abs(scrubberMidGain) > 0.001 || abs(scrubberHighGain) > 0.001))
+            || (limiterEnabled && limiterInputGain > 0.001)
     }
 
     // MARK: Loading
@@ -231,6 +301,9 @@ public final class AudioEngine: ObservableObject {
         try file.read(into: buffer)
         sourceBuffer = buffer
         cachedReversed = Self.reversedBuffer(buffer)
+        stereoBuffer = buffer
+        cachedStereoReversed = cachedReversed
+        updateStereoBuffers()
         duration = Double(buffer.frameLength) / buffer.format.sampleRate
         position = 0
         loopA = nil; loopB = nil; loopEnabled = false
@@ -242,6 +315,9 @@ public final class AudioEngine: ObservableObject {
         applyReverb()
         applyDelay()
         applyDistortion()
+        applyVocalEnhancer()
+        applyScrubberEQ()
+        applyLimiter()
     }
 
     /// Rebuild the graph for the loaded file. Nodes are detached from the
@@ -251,7 +327,8 @@ public final class AudioEngine: ObservableObject {
         guard let format else { return }
         if let old = engine {
             old.stop()
-            for node: AVAudioNode in [player, timePitch, eqA, eqB, distortion, delay, reverb, limiter] {
+            for node: AVAudioNode in [player, timePitch, eqA, eqB, scrubberEQ, vocalEQ,
+                                      distortion, delay, reverb, limiter] {
                 if node.engine === old { old.detach(node) }
             }
         }
@@ -260,6 +337,8 @@ public final class AudioEngine: ObservableObject {
         engine.attach(timePitch)
         engine.attach(eqA)
         engine.attach(eqB)
+        engine.attach(scrubberEQ)
+        engine.attach(vocalEQ)
         engine.attach(distortion)
         engine.attach(delay)
         engine.attach(reverb)
@@ -267,7 +346,9 @@ public final class AudioEngine: ObservableObject {
         engine.connect(player, to: timePitch, format: format)
         engine.connect(timePitch, to: eqA, format: format)
         engine.connect(eqA, to: eqB, format: format)
-        engine.connect(eqB, to: distortion, format: format)
+        engine.connect(eqB, to: scrubberEQ, format: format)
+        engine.connect(scrubberEQ, to: vocalEQ, format: format)
+        engine.connect(vocalEQ, to: distortion, format: format)
         engine.connect(distortion, to: delay, format: format)
         engine.connect(delay, to: reverb, format: format)
         engine.connect(reverb, to: limiter, format: format)
@@ -299,7 +380,7 @@ public final class AudioEngine: ObservableObject {
     }
 
     private func startForwardSegment(from seconds: Double, length: Double, looping: Bool) {
-        guard let buffer = sourceBuffer, let format else { return }
+        guard let buffer = stereoBuffer ?? sourceBuffer, let format else { return }
         let sampleRate = format.sampleRate
         let startFrame = AVAudioFrameCount(max(0, min(seconds, duration)) * sampleRate)
         let frames = AVAudioFrameCount(max(0, min(length, duration - seconds)) * sampleRate)
@@ -321,7 +402,7 @@ public final class AudioEngine: ObservableObject {
     /// Loop the [a, b] section backwards: the reversed slice covering the
     /// section is scheduled with .loops, so audio runs B→A then jumps to B.
     private func playReversedLoop(a: Double, b: Double) {
-        guard let buffer = cachedReversed, let format else { return }
+        guard let buffer = cachedStereoReversed ?? cachedReversed, let format else { return }
         let sampleRate = format.sampleRate
         let startFrame = AVAudioFrameCount(max(0, duration - b) * sampleRate)
         let frames = AVAudioFrameCount(max(0, min(b - a, duration)) * sampleRate)
@@ -341,7 +422,7 @@ public final class AudioEngine: ObservableObject {
     }
 
     private func playReversed() {
-        guard let buffer = cachedReversed, let format else { return }
+        guard let buffer = cachedStereoReversed ?? cachedReversed, let format else { return }
         let sampleRate = format.sampleRate
         // Position in reversed stream that mirrors the current source position.
         let reversePos = max(0, duration - position)
@@ -526,11 +607,29 @@ public final class AudioEngine: ObservableObject {
         return out
     }
 
+    private static func widthAdjusted(_ b: AVAudioPCMBuffer, width: Float) -> AVAudioPCMBuffer {
+        let out = AVAudioPCMBuffer(pcmFormat: b.format, frameCapacity: b.frameLength)!
+        out.frameLength = b.frameLength
+        guard b.format.channelCount == 2,
+              let src = b.floatChannelData, let dst = out.floatChannelData else {
+            return slice(b, from: 0, length: b.frameLength)
+        }
+        for i in 0..<Int(b.frameLength) {
+            let left = src[0][i]
+            let right = src[1][i]
+            let mid = (left + right) * 0.5
+            let side = (left - right) * 0.5 * width
+            dst[0][i] = mid + side
+            dst[1][i] = mid - side
+        }
+        return out
+    }
+
     /// Build the export source: forward buffer, or loop region repeated N times.
     public func exportSource(loopOnly: Bool, loopRepeat: Int) -> AVAudioPCMBuffer? {
-        guard let buffer = sourceBuffer else { return nil }
+        guard let buffer = stereoBuffer ?? sourceBuffer else { return nil }
         if reverseEnabled {
-            guard let r = cachedReversed else { return nil }
+            guard let r = cachedStereoReversed ?? cachedReversed else { return nil }
             return r
         }
         guard loopOnly, loopIsValid, let a = loopA, let b = loopB else { return buffer }
@@ -578,8 +677,12 @@ public final class AudioEngine: ObservableObject {
         tp.pitch = Float(pitchSemitones * 100)
         tp.overlap = 32
         let eA = AVAudioUnitEQ(numberOfBands: 16)
-        let eB = AVAudioUnitEQ(numberOfBands: 15)
+        let eB = AVAudioUnitEQ(numberOfBands: 16)
         configureEQInto(eA, eB, enabled: eqEnabled)
+        let scrub = AVAudioUnitEQ(numberOfBands: 3)
+        let vocal = AVAudioUnitEQ(numberOfBands: 4)
+        configureScrubberEQ(scrub, enabled: scrubberEQEnabled)
+        configureVocalEQ(vocal, enabled: vocalEnhancerEnabled)
         let dist = AVAudioUnitDistortion()
         dist.loadFactoryPreset(.multiDistortedCubed)
         dist.preGain = distortionEnabled ? min(max(distortionGain, -80), 20) : 0
@@ -592,15 +695,14 @@ public final class AudioEngine: ObservableObject {
         let rev = AVAudioUnitReverb()
         rev.loadFactoryPreset(.mediumHall)
         rev.wetDryMix = reverbEnabled ? min(max(reverbMix, 0), 100) : 0
-        let lim = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
-            componentType: kAudioUnitType_Effect,
-            componentSubType: kAudioUnitSubType_DynamicsProcessor,
-            componentManufacturer: kAudioUnitManufacturer_Apple,
-            componentFlags: 0, componentFlagsMask: 0))
+        let lim = Self.makePeakLimiter()
+        configureLimiter(lim)
         renderEngine.attach(player)
         renderEngine.attach(tp)
         renderEngine.attach(eA)
         renderEngine.attach(eB)
+        renderEngine.attach(scrub)
+        renderEngine.attach(vocal)
         renderEngine.attach(dist)
         renderEngine.attach(dly)
         renderEngine.attach(rev)
@@ -609,7 +711,9 @@ public final class AudioEngine: ObservableObject {
         renderEngine.connect(player, to: tp, format: format)
         renderEngine.connect(tp, to: eA, format: format)
         renderEngine.connect(eA, to: eB, format: format)
-        renderEngine.connect(eB, to: dist, format: format)
+        renderEngine.connect(eB, to: scrub, format: format)
+        renderEngine.connect(scrub, to: vocal, format: format)
+        renderEngine.connect(vocal, to: dist, format: format)
         renderEngine.connect(dist, to: dly, format: format)
         renderEngine.connect(dly, to: rev, format: format)
         renderEngine.connect(rev, to: lim, format: format)
@@ -624,13 +728,15 @@ public final class AudioEngine: ObservableObject {
         switch exportFormat {
         case .wav:
             outputSettings[AVFormatIDKey] = kAudioFormatLinearPCM
-            outputSettings[AVLinearPCMBitDepthKey] = 16
+            // Preserve more of the offline renderer's dynamic range than CD
+            // depth when EQ or effects create low-level detail.
+            outputSettings[AVLinearPCMBitDepthKey] = 24
             outputSettings[AVLinearPCMIsFloatKey] = false
             outputSettings[AVLinearPCMIsBigEndianKey] = false
             outputSettings[AVLinearPCMIsNonInterleaved] = false
         case .m4a:
             outputSettings[AVFormatIDKey] = kAudioFormatMPEG4AAC
-            outputSettings[AVEncoderBitRateKey] = 192_000
+            outputSettings[AVEncoderBitRateKey] = 256_000
         }
         let out = try AVAudioFile(forWriting: url, settings: outputSettings,
                                   commonFormat: format.commonFormat,
@@ -702,6 +808,36 @@ public final class AudioEngine: ObservableObject {
             eB.bands[i].gain = gains[16 + i]
             eB.bands[i].bypass = abs(gains[16 + i]) <= 0.001
         }
+    }
+
+    private func configureScrubberEQ(_ eq: AVAudioUnitEQ, enabled: Bool) {
+        let gains = [scrubberLowGain, scrubberMidGain, scrubberHighGain]
+        for i in 0..<3 {
+            let band = eq.bands[i]
+            band.filterType = i == 0 ? .lowShelf : (i == 2 ? .highShelf : .parametric)
+            band.frequency = [120, 1000, 8000][i]
+            band.bandwidth = 1
+            band.gain = min(max(gains[i], -12), 12)
+            band.bypass = !enabled || abs(gains[i]) <= 0.001
+        }
+    }
+
+    private func configureVocalEQ(_ eq: AVAudioUnitEQ, enabled: Bool) {
+        for i in 0..<4 {
+            let band = eq.bands[i]
+            band.filterType = i == 0 ? .highPass : (i == 3 ? .highShelf : .parametric)
+            band.frequency = [90, 250, 3200, 10000][i]
+            band.bandwidth = 1
+            band.gain = [0, -1.5, 3, 1.5][i]
+            band.bypass = !enabled
+        }
+    }
+
+    private func configureLimiter(_ unit: AVAudioUnitEffect) {
+        unit.auAudioUnit.shouldBypassEffect = !limiterEnabled
+        unit.auAudioUnit.parameterTree?
+            .parameter(withAddress: AUParameterAddress(kLimiterParam_PreGain))?.value =
+            min(max(limiterInputGain, 0), 12)
     }
 }
 

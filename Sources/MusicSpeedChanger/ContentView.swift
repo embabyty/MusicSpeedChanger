@@ -6,11 +6,15 @@ struct ContentView: View {
     @EnvironmentObject var engine: AudioEngine
     @EnvironmentObject var tracks: TrackList
     @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var patreon: PatreonAuth
 
     @State private var showFiles = true
     @State private var exporting = false
     @State private var isEditingCards = false
     @State private var showCardGallery = false
+    @State private var showSaveCustomPreset = false
+    @State private var customPresetName = ""
+    @State private var activeSavedCustomPresetID: UUID?
     @State private var showSaveDialog = false
     @State private var saveLoopOnly = false
     @State private var saveRepeat = 1
@@ -24,20 +28,62 @@ struct ContentView: View {
 
     private var hasLoop: Bool { engine.loopIsValid }
 
+    private var isPublicBetaBuild: Bool {
+        guard let version = UpdateChecker.currentVersion else { return false }
+        return PatreonConfig.Channel.of(version) == .publicbeta
+    }
+
+    private var isDevBetaBuild: Bool {
+        #if DEBUG
+        return true
+        #else
+        guard let version = UpdateChecker.currentVersion else { return false }
+        return PatreonConfig.Channel.of(version) == .devbeta
+        #endif
+    }
+
+    private var canEditCardWidgets: Bool {
+        canUseCustomPreset
+    }
+
+    private var canUseCustomPreset: Bool {
+        !isPublicBetaBuild || PatreonAuth.cachedBasic() != nil
+    }
+
     /// Controls shown in the Player for the active preset, in order.
     private var activeControls: [PlayerControl] {
-        settings.settings.editorPreset == .custom
-            ? settings.settings.customControls
-            : settings.settings.editorPreset.includedControls
+        if settings.settings.editorPreset == .custom {
+            return canUseCustomPreset
+                ? settings.settings.customControls
+                : EditorPreset.default.includedControls
+        }
+        return settings.settings.editorPreset.includedControls
     }
 
     var body: some View {
         NavigationSplitView {
             FinderSidebar(
                 selection: Binding(
-                    get: { settings.settings.editorPreset },
-                    set: { settings.settings.editorPreset = $0; settings.persist() }),
-                presetsEnabled: !tracks.tracks.isEmpty)
+                    get: {
+                        settings.settings.editorPreset == .custom && !canUseCustomPreset
+                            ? .default : settings.settings.editorPreset
+                    },
+                    set: {
+                        activeSavedCustomPresetID = nil
+                        settings.settings.editorPreset = $0
+                        settings.persist()
+                    }),
+                presetsEnabled: !tracks.tracks.isEmpty,
+                showCustomPreset: canUseCustomPreset,
+                showSavedCustomPresets: isDevBetaBuild,
+                savedCustomPresets: settings.settings.savedCustomPresets,
+                activeSavedCustomPresetID: activeSavedCustomPresetID,
+                onSaveCustomPreset: {
+                    customPresetName = ""
+                    showSaveCustomPreset = true
+                },
+                onSelectSavedCustomPreset: loadSavedCustomPreset,
+                onDeleteSavedCustomPreset: deleteSavedCustomPreset)
                 .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 330)
         } detail: {
             PlayerView(onStep: stepTrack, onOpen: openPanel,
@@ -49,15 +95,21 @@ struct ContentView: View {
                        onRemoveControl: removeControl,
                        onSetCardSize: { setCardSize($1, for: $0) },
                        onMoveControl: moveControl,
-                       onOpenGallery: { showCardGallery = true },
-                       onRequestEdit: { isEditingCards = true },
+                       onOpenGallery: { if canEditCardWidgets { showCardGallery = true } },
+                       onRequestEdit: { if canEditCardWidgets { isEditingCards = true } },
                        onDoneEditing: { isEditingCards = false },
                        onDropNewCard: { addControl($0, size: $1) })
                 .modifier(LibraryToolbar(exporting: exporting, onOpen: openPanel,
                                           onExport: beginExport, onToggleFiles: toggleFiles,
                                           isEditingCards: isEditingCards,
-                                          onToggleEdit: { isEditingCards.toggle() },
-                                          onOpenGallery: { showCardGallery = true }))
+                                          isPublicBetaBuild: isPublicBetaBuild,
+                                          canEditCardWidgets: canEditCardWidgets,
+                                          onToggleEdit: {
+                                              if canEditCardWidgets { isEditingCards.toggle() }
+                                          },
+                                          onOpenGallery: {
+                                              if canEditCardWidgets { showCardGallery = true }
+                                          }))
         }
         .inspector(isPresented: $showFiles) {
             FilesView(onSelect: loadTrack)
@@ -72,7 +124,13 @@ struct ContentView: View {
                 onAdd: { addControl($0, size: $1) },
                 onRemove: removeControl)
         }
+        .sheet(isPresented: $showSaveCustomPreset) {
+            SaveCustomPresetSheet(name: $customPresetName) {
+                saveCustomPreset()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showConfigureCustomPresets)) { _ in
+            guard canEditCardWidgets else { return }
             isEditingCards = true
             showCardGallery = true
         }
@@ -179,6 +237,15 @@ struct ContentView: View {
             engine.distortionEnabled = settings.settings.lastDistortionEnabled
             engine.distortionMix = settings.settings.lastDistortionMix
             engine.distortionGain = settings.settings.lastDistortionGain
+            engine.stereoWidthPercent = settings.settings.lastStereoWidthPercent
+            engine.stereoWidthEnabled = settings.settings.lastStereoWidthEnabled
+            engine.vocalEnhancerEnabled = settings.settings.lastVocalEnhancerEnabled
+            engine.scrubberEQEnabled = settings.settings.lastScrubberEQEnabled
+            engine.scrubberLowGain = settings.settings.lastScrubberLowGain
+            engine.scrubberMidGain = settings.settings.lastScrubberMidGain
+            engine.scrubberHighGain = settings.settings.lastScrubberHighGain
+            engine.limiterInputGain = settings.settings.lastLimiterInputGain
+            engine.limiterEnabled = settings.settings.lastLimiterEnabled
         } else if settings.settings.applyDefaultsOnFileLoad {
             engine.tempoPercent = settings.settings.defaultTempoPercent
             engine.pitchSemitones = settings.settings.defaultPitchSemitones
@@ -221,11 +288,46 @@ struct ContentView: View {
     /// Copies the active preset into Custom on first mutation, so edits
     /// never clobber the built-in presets.
     private func ensureCustomForEdit() {
+        activeSavedCustomPresetID = nil
         if settings.settings.editorPreset != .custom {
             let current = activeControls
             settings.settings.editorPreset = .custom
             settings.settings.customControls = current
         }
+    }
+
+    private func saveCustomPreset() {
+        let name = customPresetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let controls = settings.settings.customControls
+        let sizes = Dictionary(uniqueKeysWithValues: controls.map {
+            ($0.rawValue, settings.settings.cardSize(for: $0))
+        })
+        let preset = SavedCustomPreset(name: name, controls: controls, cardSizes: sizes)
+        settings.settings.savedCustomPresets.append(preset)
+        settings.persist()
+        activeSavedCustomPresetID = preset.id
+        showSaveCustomPreset = false
+    }
+
+    private func loadSavedCustomPreset(_ preset: SavedCustomPreset) {
+        settings.settings.editorPreset = .custom
+        settings.settings.customControls = preset.controls
+        for control in preset.controls {
+            if let size = preset.cardSizes[control.rawValue] {
+                settings.settings.setCardSize(size, for: control)
+            }
+        }
+        settings.persist()
+        activeSavedCustomPresetID = preset.id
+    }
+
+    private func deleteSavedCustomPreset(_ preset: SavedCustomPreset) {
+        settings.settings.savedCustomPresets.removeAll { $0.id == preset.id }
+        if activeSavedCustomPresetID == preset.id {
+            activeSavedCustomPresetID = nil
+        }
+        settings.persist()
     }
 
     private func addControl(_ control: PlayerControl, size: CardSize) {
@@ -405,6 +507,8 @@ struct LibraryToolbar: ViewModifier {
     let onExport: () -> Void
     let onToggleFiles: () -> Void
     var isEditingCards: Bool = false
+    var isPublicBetaBuild: Bool = false
+    var canEditCardWidgets: Bool = true
     var onToggleEdit: (() -> Void)?
     var onOpenGallery: (() -> Void)?
 
@@ -424,11 +528,21 @@ struct LibraryToolbar: ViewModifier {
                     .help("Show or hide the file list")
             }
             ToolbarItem(placement: .primaryAction) {
-                Button(isEditingCards ? "Done" : "Edit Cards",
-                       systemImage: isEditingCards ? "checkmark" : "square.grid.2x2") {
+                Button {
                     onToggleEdit?()
+                } label: {
+                    if isPublicBetaBuild {
+                        Image(systemName: "crown.fill")
+                            .foregroundStyle(.yellow)
+                    } else {
+                        Label(isEditingCards ? "Done" : "Edit Cards",
+                              systemImage: isEditingCards ? "checkmark" : "square.grid.2x2")
+                    }
                 }
-                .help(isEditingCards ? "Finish editing cards" : "Edit player cards")
+                .disabled(!canEditCardWidgets)
+                .help(isPublicBetaBuild
+                      ? (canEditCardWidgets ? "MSC+ card editor" : "MSC+ card editor — Em Community Basic members")
+                      : (isEditingCards ? "Finish editing cards" : "Edit player cards"))
                 // Right-clicking Edit Cards offers Add Cards (reveals +).
                 .contextMenu {
                     Button("Add Cards…", systemImage: "plus") { onOpenGallery?() }
@@ -453,6 +567,7 @@ struct SaveDialogSheet: View {
     let hasLoop: Bool
     let onSave: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var fileNameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -460,6 +575,7 @@ struct SaveDialogSheet: View {
             HStack {
                 Text("New Filename")
                 TextField("filename", text: $fileName)
+                    .focused($fileNameFocused)
             }
             Picker("Format", selection: $format) {
                 ForEach(AudioExportFormat.allCases) { format in
@@ -482,11 +598,42 @@ struct SaveDialogSheet: View {
             }
         }
         .padding()
+        .onAppear { fileNameFocused = true }
     }
 
     static func sanitizeFileName(_ name: String) -> String {
         let invalid = CharacterSet(charactersIn: "/\\?%*|\"<>:")
         let cleaned = name.components(separatedBy: invalid).joined(separator: "_")
         return cleaned.isEmpty ? "track" : cleaned
+    }
+}
+
+private struct SaveCustomPresetSheet: View {
+    @Binding var name: String
+    let onSave: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var nameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Save Custom Preset")
+                .font(.title2.weight(.semibold))
+            TextField("Preset name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($nameFocused)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save") {
+                    onSave()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+        .onAppear { nameFocused = true }
     }
 }

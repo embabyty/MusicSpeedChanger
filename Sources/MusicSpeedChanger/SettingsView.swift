@@ -33,7 +33,7 @@ struct SettingsView: View {
     @State private var checking = false
     @State private var updateStatus = ""
     @State private var pendingRelease: UpdateChecker.Release?
-    @StateObject private var patreon = PatreonAuth()
+    @EnvironmentObject private var patreon: PatreonAuth
 
     var body: some View {
         VStack(spacing: 0) {

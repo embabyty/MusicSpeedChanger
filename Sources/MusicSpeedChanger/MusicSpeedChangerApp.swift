@@ -42,6 +42,7 @@ struct MusicSpeedChangerApp: App {
                         .environmentObject(engine)
                         .environmentObject(tracks)
                         .environmentObject(settings)
+                        .environmentObject(patreon)
                         .preferredColorScheme(.dark)
                         .frame(minWidth: 900, minHeight: 720)
                         .onAppear {
@@ -75,6 +76,7 @@ struct MusicSpeedChangerApp: App {
         Settings {
             SettingsView()
                 .environmentObject(settings)
+                .environmentObject(patreon)
                 .preferredColorScheme(.dark)
         }
     }
@@ -88,7 +90,13 @@ final class SettingsStore: ObservableObject {
         self.settings = AppSettings.load()
     }
 
-    func persist() { settings.save() }
+    func persist() {
+        // AppSettings is a reference type, so edits to its nested properties
+        // do not trigger @Published's setter. Publish after those edits so
+        // views using the updated settings (including card order) refresh.
+        objectWillChange.send()
+        settings.save()
+    }
 
     func persistLastEffects(engine: AudioEngine) {
         settings.lastTempoPercent = engine.tempoPercent
@@ -105,6 +113,15 @@ final class SettingsStore: ObservableObject {
         settings.lastDistortionEnabled = engine.distortionEnabled
         settings.lastDistortionMix = engine.distortionMix
         settings.lastDistortionGain = engine.distortionGain
+        settings.lastStereoWidthEnabled = engine.stereoWidthEnabled
+        settings.lastStereoWidthPercent = engine.stereoWidthPercent
+        settings.lastVocalEnhancerEnabled = engine.vocalEnhancerEnabled
+        settings.lastScrubberEQEnabled = engine.scrubberEQEnabled
+        settings.lastScrubberLowGain = engine.scrubberLowGain
+        settings.lastScrubberMidGain = engine.scrubberMidGain
+        settings.lastScrubberHighGain = engine.scrubberHighGain
+        settings.lastLimiterEnabled = engine.limiterEnabled
+        settings.lastLimiterInputGain = engine.limiterInputGain
         if settings.rememberFileList {
             settings.fileListPaths = tracksPathCache
         }

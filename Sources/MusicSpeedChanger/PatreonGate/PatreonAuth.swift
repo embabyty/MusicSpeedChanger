@@ -30,11 +30,11 @@ final class PatreonAuth: ObservableObject {
 
     // MARK: - Gate decision
 
-    /// True when the running build is a supporter-gated beta. The gate code
-    /// first shipped in v1.0.1 Beta 3, so any beta that contains it is gated.
+    /// Dev beta builds require a supporter at launch. Public beta builds can
+    /// be used by everyone; Basic members also unlock the card editor there.
     static var gateRequired: Bool {
         guard let v = UpdateChecker.currentVersion else { return false }
-        return v.range(of: "beta", options: .caseInsensitive) != nil
+        return PatreonConfig.Channel.of(v) == .devbeta
     }
 
     /// Silent pass when the cached entitlement satisfies this build's channel.

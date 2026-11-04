@@ -320,6 +320,14 @@ struct PlayerView: View {
             editableChrome(control: control, size: size) { delayCard }
         case .distortion:
             editableChrome(control: control, size: size) { distortionCard }
+        case .stereoWidth:
+            editableChrome(control: control, size: size) { stereoWidthCard }
+        case .vocalEnhancer:
+            editableChrome(control: control, size: size) { vocalEnhancerCard }
+        case .threeBandEQ:
+            editableChrome(control: control, size: size) { scrubberEQCard }
+        case .limiter:
+            editableChrome(control: control, size: size) { limiterCard }
         default:
             editableChrome(control: control, size: size) { soonCard(for: control) }
         }
@@ -548,6 +556,65 @@ struct PlayerView: View {
                     .frame(width: 52, alignment: .trailing).monospacedDigit()
             }
             .disabled(!engine.distortionEnabled)
+        }
+        .disabled(!engine.isLoaded || isEditingCards)
+    }
+
+    private var stereoWidthCard: some View {
+        Card("Stereowise (stereo width)") {
+            Toggle("Enable", isOn: $engine.stereoWidthEnabled)
+            HStack {
+                Text("Width")
+                Slider(value: $engine.stereoWidthPercent, in: 0...200)
+                Text(String(format: "%.0f%%", engine.stereoWidthPercent))
+                    .frame(width: 46, alignment: .trailing).monospacedDigit()
+            }
+            .disabled(!engine.stereoWidthEnabled)
+        }
+        .disabled(!engine.isLoaded || isEditingCards)
+    }
+
+    private var vocalEnhancerCard: some View {
+        Card("Vocal Enhancer") {
+            Toggle("Enable", isOn: $engine.vocalEnhancerEnabled)
+            Text("Adds presence and clarity to voices.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .disabled(!engine.isLoaded || isEditingCards)
+    }
+
+    private var scrubberEQCard: some View {
+        Card("3 Band Scrubber EQ") {
+            Toggle("Enable", isOn: $engine.scrubberEQEnabled)
+            scrubberSlider("Bass", value: $engine.scrubberLowGain)
+                .disabled(!engine.scrubberEQEnabled)
+            scrubberSlider("Mid", value: $engine.scrubberMidGain)
+                .disabled(!engine.scrubberEQEnabled)
+            scrubberSlider("Treble", value: $engine.scrubberHighGain)
+                .disabled(!engine.scrubberEQEnabled)
+        }
+        .disabled(!engine.isLoaded || isEditingCards)
+    }
+
+    private func scrubberSlider(_ title: String, value: Binding<Float>) -> some View {
+        HStack {
+            Text(title).frame(width: 48, alignment: .leading)
+            Slider(value: value, in: -12...12)
+            Text(String(format: "%+.0f dB", value.wrappedValue))
+                .frame(width: 54, alignment: .trailing).monospacedDigit()
+        }
+    }
+
+    private var limiterCard: some View {
+        Card("Limiter") {
+            Toggle("Enable", isOn: $engine.limiterEnabled)
+            HStack {
+                Text("Input")
+                Slider(value: $engine.limiterInputGain, in: 0...12)
+                Text(String(format: "+%.0f dB", engine.limiterInputGain))
+                    .frame(width: 58, alignment: .trailing).monospacedDigit()
+            }
+            .disabled(!engine.limiterEnabled)
         }
         .disabled(!engine.isLoaded || isEditingCards)
     }

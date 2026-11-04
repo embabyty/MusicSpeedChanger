@@ -4,3 +4,4 @@ dist/
 Website/node_modules/
 Website/dist/
 Sources/MusicSpeedChanger/PatreonGate/PatreonSecrets.swift
+.DS_Store

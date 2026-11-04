@@ -81,7 +81,7 @@ struct PatreonGateView: View {
             }
 
             HStack(spacing: 12) {
-                Button("Get EAF+") { NSWorkspace.shared.open(PatreonConfig.pageURL) }
+                Button("Get Em Community Basic") { NSWorkspace.shared.open(PatreonConfig.pageURL) }
                 Button("Quit") { NSApp.terminate(nil) }
                     .buttonStyle(.link)
             }

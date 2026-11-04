@@ -41,7 +41,7 @@ public enum WhatsNew {
         return [
             "Tempo 50–200% with pitch preserved, pitch ±12 semitones",
             "AB loop with reverse playback for drilling sections",
-            "31-band graphic EQ applied live and in WAV/M4A exports",
+            "32-band graphic EQ with a Loudness preset, applied live and in WAV/M4A exports",
         ]
     }
 }

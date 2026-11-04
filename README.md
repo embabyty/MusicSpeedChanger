@@ -1,6 +1,6 @@
 # MusicSpeedChanger (macOS)
 
-<img src="Resources/MusicSpeed.png" width="128" alt="MusicSpeedChanger logo" />
+![MusicSpeedChanger logo](Resources/MusicSpeed.png)
 
 A macOS desktop version of the Music Speed Changer mobile app — slow down / speed up
 music **without changing pitch**, and shift key **without changing tempo**. Built for
@@ -15,7 +15,7 @@ SwiftUI in the Liquid Glass style of macOS 26.
 - **AB loop** — set A / B points (badged on the waveform), loop the section while
   practicing, forwards or in reverse
 - **Reverse playback** — play backwards from the current position
-- **31-band graphic EQ** (ISO 20 Hz–20 kHz, ±15 dB) with presets, bypass switch,
+- **32-band graphic EQ** (ISO 16 Hz–20 kHz, ±15 dB) with presets including Loudness, bypass switch,
   and a draggable response curve — applied live and in exports
 - **Import** MP3, WAV, M4A/AAC, AIFF, FLAC (via Core Audio / AVFoundation)
 - **Waveform display** with playhead, click/drag to seek, loop-region highlight,
@@ -25,7 +25,7 @@ SwiftUI in the Liquid Glass style of macOS 26.
   loop if one is set, with loop-repeat count and `_eq` in the filename when EQ is active)
 - Volume control, effective-duration readout ("(plays as 2:00 @ 150%)")
 - Clean DSP chain: `AVAudioUnitTimePitch` for independent tempo/pitch, two chained
-  `AVAudioUnitEQ` nodes for the 31 bands, and an Apple DynamicsProcessor peak
+  `AVAudioUnitEQ` nodes for the 32 bands, and an Apple PeakLimiter
   limiter after the EQ to stop stretch/EQ overshoot from clipping — playback and
   exports alike
 - **Automatic updates** — checks this repo's GitHub Releases on startup and offers

@@ -1,5 +1,20 @@
 import Foundation
 
+/// A named snapshot of a user's custom player card layout.
+public struct SavedCustomPreset: Codable, Identifiable, Equatable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var controls: [PlayerControl]
+    public var cardSizes: [String: CardSize]
+
+    public init(id: UUID = UUID(), name: String, controls: [PlayerControl], cardSizes: [String: CardSize]) {
+        self.id = id
+        self.name = name
+        self.controls = controls
+        self.cardSizes = cardSizes
+    }
+}
+
 /// Persisted settings, mirroring the Windows AppSettings (JSON on disk).
 public final class AppSettings: Codable {
     public static let defaultFeedUrl =
@@ -31,6 +46,7 @@ public final class AppSettings: Codable {
     public var showEqPanel: Bool = true
     public var editorPreset: EditorPreset = .default
     public var customControls: [PlayerControl] = PlayerControl.defaultCustom
+    public var savedCustomPresets: [SavedCustomPreset] = []
     /// Per-card widget sizes, keyed by PlayerControl raw value. Missing =
     /// the control's defaultCardSize.
     public var customCardSizes: [String: CardSize] = [:]
@@ -63,6 +79,15 @@ public final class AppSettings: Codable {
     public var lastDistortionEnabled: Bool = false
     public var lastDistortionMix: Float = 50
     public var lastDistortionGain: Float = 0
+    public var lastStereoWidthEnabled: Bool = false
+    public var lastStereoWidthPercent: Double = 100
+    public var lastVocalEnhancerEnabled: Bool = false
+    public var lastScrubberEQEnabled: Bool = false
+    public var lastScrubberLowGain: Float = 0
+    public var lastScrubberMidGain: Float = 0
+    public var lastScrubberHighGain: Float = 0
+    public var lastLimiterEnabled: Bool = true
+    public var lastLimiterInputGain: Float = 0
 
     // Appearance
     public var useSystemAccent: Bool = true
@@ -80,12 +105,15 @@ public final class AppSettings: Codable {
     enum CodingKeys: String, CodingKey {
         case autoCheckUpdates, updateFeedUrl, includeBetaUpdates, discordRPCEnabled
         case defaultTempoPercent, defaultPitchSemitones, applyDefaultsOnFileLoad, tempoSliderStep, pitchSliderStep
-        case showTempoPanel, showPitchPanel, showLoopPanel, showEqPanel, editorPreset, customControls, customCardSizes, waveformPeaks, clickToSeek
+        case showTempoPanel, showPitchPanel, showLoopPanel, showEqPanel, editorPreset, customControls, savedCustomPresets, customCardSizes, waveformPeaks, clickToSeek
         case rememberEffects, rememberFileList, fileListPaths, lastFilePath
         case shuffleEnabled, repeatMode
         case lastTempoPercent, lastPitchSemitones, lastVolumePercent, lastEqGains, lastEqEnabled
         case lastReverbEnabled, lastReverbMix, lastDelayEnabled, lastDelayMix, lastDelayTime, lastDelayFeedback
         case lastDistortionEnabled, lastDistortionMix, lastDistortionGain
+        case lastStereoWidthEnabled, lastStereoWidthPercent, lastVocalEnhancerEnabled
+        case lastScrubberEQEnabled, lastScrubberLowGain, lastScrubberMidGain, lastScrubberHighGain
+        case lastLimiterEnabled, lastLimiterInputGain
         case useSystemAccent, customAccentHex
         case patreonSupporterEmail, patreonVerifiedUntil, patreonHasEAFPlus, patreonHasEAFBasic
         case lastSeenVersion
@@ -110,6 +138,7 @@ public final class AppSettings: Codable {
         showEqPanel = try c.decodeIfPresent(Bool.self, forKey: .showEqPanel) ?? true
         editorPreset = try c.decodeIfPresent(EditorPreset.self, forKey: .editorPreset) ?? .default
         customControls = try c.decodeIfPresent([PlayerControl].self, forKey: .customControls) ?? PlayerControl.defaultCustom
+        savedCustomPresets = try c.decodeIfPresent([SavedCustomPreset].self, forKey: .savedCustomPresets) ?? []
         customCardSizes = try c.decodeIfPresent([String: CardSize].self, forKey: .customCardSizes) ?? [:]
         waveformPeaks = try c.decodeIfPresent(Int.self, forKey: .waveformPeaks) ?? 1400
         clickToSeek = try c.decodeIfPresent(Bool.self, forKey: .clickToSeek) ?? true
@@ -122,7 +151,17 @@ public final class AppSettings: Codable {
         lastTempoPercent = try c.decodeIfPresent(Double.self, forKey: .lastTempoPercent) ?? 100
         lastPitchSemitones = try c.decodeIfPresent(Double.self, forKey: .lastPitchSemitones) ?? 0
         lastVolumePercent = try c.decodeIfPresent(Double.self, forKey: .lastVolumePercent) ?? 80
-        lastEqGains = try c.decodeIfPresent([Float].self, forKey: .lastEqGains)
+        if let savedGains = try c.decodeIfPresent([Float].self, forKey: .lastEqGains) {
+            // The prior graphical EQ used the same 31 ISO bands from 20 Hz
+            // upward. Carry its 20 Hz value into the new 16 Hz band.
+            if savedGains.count == EQBands.bandCount - 1 {
+                lastEqGains = [savedGains[0]] + savedGains
+            } else {
+                lastEqGains = savedGains
+            }
+        } else {
+            lastEqGains = nil
+        }
         lastEqEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastEqEnabled) ?? true
         lastReverbEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastReverbEnabled) ?? false
         lastReverbMix = try c.decodeIfPresent(Float.self, forKey: .lastReverbMix) ?? 30
@@ -133,6 +172,15 @@ public final class AppSettings: Codable {
         lastDistortionEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastDistortionEnabled) ?? false
         lastDistortionMix = try c.decodeIfPresent(Float.self, forKey: .lastDistortionMix) ?? 50
         lastDistortionGain = try c.decodeIfPresent(Float.self, forKey: .lastDistortionGain) ?? 0
+        lastStereoWidthEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastStereoWidthEnabled) ?? false
+        lastStereoWidthPercent = try c.decodeIfPresent(Double.self, forKey: .lastStereoWidthPercent) ?? 100
+        lastVocalEnhancerEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastVocalEnhancerEnabled) ?? false
+        lastScrubberEQEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastScrubberEQEnabled) ?? false
+        lastScrubberLowGain = try c.decodeIfPresent(Float.self, forKey: .lastScrubberLowGain) ?? 0
+        lastScrubberMidGain = try c.decodeIfPresent(Float.self, forKey: .lastScrubberMidGain) ?? 0
+        lastScrubberHighGain = try c.decodeIfPresent(Float.self, forKey: .lastScrubberHighGain) ?? 0
+        lastLimiterEnabled = try c.decodeIfPresent(Bool.self, forKey: .lastLimiterEnabled) ?? true
+        lastLimiterInputGain = try c.decodeIfPresent(Float.self, forKey: .lastLimiterInputGain) ?? 0
         useSystemAccent = try c.decodeIfPresent(Bool.self, forKey: .useSystemAccent) ?? true
         customAccentHex = try c.decodeIfPresent(String.self, forKey: .customAccentHex) ?? "#2E7D32"
         patreonSupporterEmail = try c.decodeIfPresent(String.self, forKey: .patreonSupporterEmail)
@@ -152,6 +200,11 @@ public final class AppSettings: Codable {
         lastTempoPercent = min(max(lastTempoPercent, 25), 300)
         lastPitchSemitones = min(max(lastPitchSemitones, -12), 12)
         lastVolumePercent = min(max(lastVolumePercent, 0), 100)
+        lastStereoWidthPercent = min(max(lastStereoWidthPercent, 0), 200)
+        lastScrubberLowGain = min(max(lastScrubberLowGain, -12), 12)
+        lastScrubberMidGain = min(max(lastScrubberMidGain, -12), 12)
+        lastScrubberHighGain = min(max(lastScrubberHighGain, -12), 12)
+        lastLimiterInputGain = min(max(lastLimiterInputGain, 0), 12)
         if updateFeedUrl.trimmingCharacters(in: .whitespaces).isEmpty {
             updateFeedUrl = AppSettings.defaultFeedUrl
         }

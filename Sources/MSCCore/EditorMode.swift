@@ -25,6 +25,10 @@ public enum PlayerControl: String, CaseIterable, Codable, Identifiable, Sendable
     case linkTempoPitch
     case mono
     case invertStereo
+    case stereoWidth
+    case vocalEnhancer
+    case threeBandEQ
+    case limiter
 
     public var id: Self { self }
 
@@ -51,6 +55,10 @@ public enum PlayerControl: String, CaseIterable, Codable, Identifiable, Sendable
         case .linkTempoPitch: "Link Tempo and Pitch"
         case .mono: "Mono"
         case .invertStereo: "Invert Stereo"
+        case .stereoWidth: "Stereowise"
+        case .vocalEnhancer: "Vocal Enhancer"
+        case .threeBandEQ: "3 Band Scrubber EQ"
+        case .limiter: "Limiter"
         }
     }
 
@@ -77,6 +85,10 @@ public enum PlayerControl: String, CaseIterable, Codable, Identifiable, Sendable
         case .linkTempoPitch: "link"
         case .mono: "speaker"
         case .invertStereo: "arrow.left.arrow.right"
+        case .stereoWidth: "arrow.left.and.right"
+        case .vocalEnhancer: "mic"
+        case .threeBandEQ: "slider.horizontal.3"
+        case .limiter: "waveform.path"
         }
     }
 
@@ -85,7 +97,8 @@ public enum PlayerControl: String, CaseIterable, Codable, Identifiable, Sendable
     public var isSupportedOnMac: Bool {
         switch self {
         case .waveform, .reverse, .tempo, .pitch, .loop, .equalizer, .volume,
-             .reverb, .delay, .distortion:
+             .reverb, .delay, .distortion, .stereoWidth, .vocalEnhancer,
+             .threeBandEQ, .limiter:
             return true
         default:
             return false
@@ -115,7 +128,7 @@ public enum PlayerControl: String, CaseIterable, Codable, Identifiable, Sendable
         case .tempo: "Change speed without changing pitch."
         case .pitch: "Change key without changing tempo."
         case .loop: "Repeat a practice section A–B."
-        case .equalizer: "Shape the tone with 31 bands."
+        case .equalizer: "Shape the tone with 32 bands."
         case .preamp: "Boost or cut the overall signal."
         case .volume: "Control the output level."
         case .art: "Show the track artwork."
@@ -131,6 +144,10 @@ public enum PlayerControl: String, CaseIterable, Codable, Identifiable, Sendable
         case .linkTempoPitch: "Lock tempo and pitch together."
         case .mono: "Collapse the mix to mono."
         case .invertStereo: "Swap the left and right channels."
+        case .stereoWidth: "Widen or narrow the stereo image."
+        case .vocalEnhancer: "Bring vocal presence and clarity forward."
+        case .threeBandEQ: "Adjust bass, mids, and treble with three sliders."
+        case .limiter: "Control peaks and help prevent clipping."
         }
     }
 }
@@ -207,7 +224,7 @@ public enum EditorPreset: String, CaseIterable, Codable, Identifiable, Sendable 
         case .markers: "Tempo, Pitch, Loop, Markers, Waveform"
         case .equalizer: "Preamp, Balance, Equalizer"
         case .trackIsolation: "Tempo, Pitch, Loop, Track Isolation, Waveform"
-        case .effects: "Reverb, Delay, Distortion, Mono, Invert Stereo"
+        case .effects: "Stereo Width, Vocal Enhancer, 3 Band EQ, Limiter, Reverb, Delay, Distortion"
         case .reverse: "Reverse, Tempo, Pitch, Loop, Waveform"
         case .a4Tuning: "A4 Tuning, Pitch, Key, Tempo, Waveform"
         case .player: "Art, Volume, Tempo"
@@ -240,7 +257,8 @@ public enum EditorPreset: String, CaseIterable, Codable, Identifiable, Sendable 
         case .markers: [.tempo, .pitch, .loop, .markers, .waveform]
         case .equalizer: [.preamp, .balance, .equalizer]
         case .trackIsolation: [.tempo, .pitch, .loop, .trackIsolation, .waveform]
-        case .effects: [.reverb, .delay, .distortion, .mono, .invertStereo]
+        case .effects: [.stereoWidth, .vocalEnhancer, .threeBandEQ, .limiter,
+                        .reverb, .delay, .distortion, .mono, .invertStereo]
         case .reverse: [.reverse, .tempo, .pitch, .loop, .waveform]
         case .a4Tuning: [.a4Tuning, .pitch, .key, .tempo, .waveform]
         case .player: [.art, .volume, .tempo]

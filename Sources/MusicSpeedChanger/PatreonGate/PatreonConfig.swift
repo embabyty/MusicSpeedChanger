@@ -57,7 +57,7 @@ enum PatreonConfig {
         /// Tier description shown on the gate for this channel.
         var tierDescription: String {
             switch self {
-            case .devbeta: "EAF+ members"
+            case .devbeta: "Em Community Basic members"
             case .publicbeta: "EAF Basic members or higher"
             case .stable: "everyone"
             }

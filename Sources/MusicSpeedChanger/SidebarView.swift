@@ -8,18 +8,52 @@ struct FinderSidebar: View {
     @Binding var selection: EditorPreset
     /// When false (no audio files), every preset except Default is disabled.
     var presetsEnabled: Bool = true
+    /// Public beta exposes Custom only to Em Community Basic members.
+    var showCustomPreset: Bool = true
+    var showSavedCustomPresets: Bool = false
+    var savedCustomPresets: [SavedCustomPreset] = []
+    var activeSavedCustomPresetID: UUID?
+    var onSaveCustomPreset: (() -> Void)?
+    var onSelectSavedCustomPreset: ((SavedCustomPreset) -> Void)?
+    var onDeleteSavedCustomPreset: ((SavedCustomPreset) -> Void)?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 SidebarSection(title: "Presets") {
-                    ForEach(EditorPreset.allCases) { preset in
+                    ForEach(EditorPreset.allCases.filter { $0 != .custom || showCustomPreset }) { preset in
                         let enabled = presetsEnabled || preset == .default
                         SidebarRow(icon: preset.icon, title: preset.title,
                                    subtitle: preset.subtitle,
                                    selected: selection == preset,
                                    disabled: !enabled) {
                             selection = preset
+                        }
+                    }
+                    if selection == .custom && showSavedCustomPresets {
+                        Button("Save Current Preset…", systemImage: "plus") {
+                            onSaveCustomPreset?()
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+
+                        ForEach(savedCustomPresets) { preset in
+                            HStack(spacing: 2) {
+                                SidebarRow(icon: "rectangle.stack", title: preset.name,
+                                           selected: activeSavedCustomPresetID == preset.id) {
+                                    onSelectSavedCustomPreset?(preset)
+                                }
+                                Button {
+                                    onDeleteSavedCustomPreset?(preset)
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Delete \(preset.name)")
+                            }
+                            .padding(.leading, 14)
                         }
                     }
                 }

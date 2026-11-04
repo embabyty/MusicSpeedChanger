@@ -1,9 +1,9 @@
 import SwiftUI
 import MSCCore
 
-/// Graphical 31-band editor card (20 Hz – 20 kHz), embedded in the Player
+/// Graphical 32-band editor card (16 Hz – 20 kHz), embedded in the Player
 /// under the AB Loop card. The curve shows the combined response of the
-/// 31 peaking filters; drag any node vertically to set its band gain.
+/// 32 peaking filters; drag any node vertically to set its band gain.
 struct EqualizerCard: View {
     @EnvironmentObject var engine: AudioEngine
 
@@ -68,7 +68,7 @@ struct EQCurveEditor: View {
     @Binding var activeBand: Int?
     let onAdjust: (Int, Float) -> Void
 
-    private let minFreq = 20.0
+    private let minFreq = 16.0
     private let maxFreq = 20000.0
     private let maxDb = 16.0
 
@@ -162,7 +162,7 @@ struct EQCurveEditor: View {
         let w = Double(size.width), h = Double(size.height)
         var grid = Path()
         // Octave + decade lines
-        var f = 20.0
+        var f = minFreq
         while f <= maxFreq {
             let x = xPos(f, width: w)
             grid.move(to: CGPoint(x: x, y: 0))
