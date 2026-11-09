@@ -6,7 +6,6 @@ struct ContentView: View {
     @EnvironmentObject var engine: AudioEngine
     @EnvironmentObject var tracks: TrackList
     @EnvironmentObject var settings: SettingsStore
-    @EnvironmentObject var patreon: PatreonAuth
 
     @State private var showFiles = true
     @State private var exporting = false
@@ -28,34 +27,19 @@ struct ContentView: View {
 
     private var hasLoop: Bool { engine.loopIsValid }
 
-    private var isPublicBetaBuild: Bool {
-        guard let version = UpdateChecker.currentVersion else { return false }
-        return PatreonConfig.Channel.of(version) == .publicbeta
-    }
-
     private var isDevBetaBuild: Bool {
         #if DEBUG
         return true
         #else
         guard let version = UpdateChecker.currentVersion else { return false }
-        return PatreonConfig.Channel.of(version) == .devbeta
+        return ReleaseChannel.of(version) == .devbeta
         #endif
-    }
-
-    private var canEditCardWidgets: Bool {
-        canUseCustomPreset
-    }
-
-    private var canUseCustomPreset: Bool {
-        !isPublicBetaBuild || PatreonAuth.cachedBasic() != nil
     }
 
     /// Controls shown in the Player for the active preset, in order.
     private var activeControls: [PlayerControl] {
         if settings.settings.editorPreset == .custom {
-            return canUseCustomPreset
-                ? settings.settings.customControls
-                : EditorPreset.default.includedControls
+            return settings.settings.customControls
         }
         return settings.settings.editorPreset.includedControls
     }
@@ -64,17 +48,14 @@ struct ContentView: View {
         NavigationSplitView {
             FinderSidebar(
                 selection: Binding(
-                    get: {
-                        settings.settings.editorPreset == .custom && !canUseCustomPreset
-                            ? .default : settings.settings.editorPreset
-                    },
+                    get: { settings.settings.editorPreset },
                     set: {
                         activeSavedCustomPresetID = nil
                         settings.settings.editorPreset = $0
                         settings.persist()
                     }),
                 presetsEnabled: !tracks.tracks.isEmpty,
-                showCustomPreset: canUseCustomPreset,
+                showCustomPreset: true,
                 showSavedCustomPresets: isDevBetaBuild,
                 savedCustomPresets: settings.settings.savedCustomPresets,
                 activeSavedCustomPresetID: activeSavedCustomPresetID,
@@ -95,21 +76,15 @@ struct ContentView: View {
                        onRemoveControl: removeControl,
                        onSetCardSize: { setCardSize($1, for: $0) },
                        onMoveControl: moveControl,
-                       onOpenGallery: { if canEditCardWidgets { showCardGallery = true } },
-                       onRequestEdit: { if canEditCardWidgets { isEditingCards = true } },
+                       onOpenGallery: { showCardGallery = true },
+                       onRequestEdit: { isEditingCards = true },
                        onDoneEditing: { isEditingCards = false },
                        onDropNewCard: { addControl($0, size: $1) })
                 .modifier(LibraryToolbar(exporting: exporting, onOpen: openPanel,
                                           onExport: beginExport, onToggleFiles: toggleFiles,
                                           isEditingCards: isEditingCards,
-                                          isPublicBetaBuild: isPublicBetaBuild,
-                                          canEditCardWidgets: canEditCardWidgets,
-                                          onToggleEdit: {
-                                              if canEditCardWidgets { isEditingCards.toggle() }
-                                          },
-                                          onOpenGallery: {
-                                              if canEditCardWidgets { showCardGallery = true }
-                                          }))
+                                          onToggleEdit: { isEditingCards.toggle() },
+                                          onOpenGallery: { showCardGallery = true }))
         }
         .inspector(isPresented: $showFiles) {
             FilesView(onSelect: loadTrack)
@@ -130,7 +105,6 @@ struct ContentView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showConfigureCustomPresets)) { _ in
-            guard canEditCardWidgets else { return }
             isEditingCards = true
             showCardGallery = true
         }
@@ -507,8 +481,6 @@ struct LibraryToolbar: ViewModifier {
     let onExport: () -> Void
     let onToggleFiles: () -> Void
     var isEditingCards: Bool = false
-    var isPublicBetaBuild: Bool = false
-    var canEditCardWidgets: Bool = true
     var onToggleEdit: (() -> Void)?
     var onOpenGallery: (() -> Void)?
 
@@ -530,19 +502,11 @@ struct LibraryToolbar: ViewModifier {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     onToggleEdit?()
-                } label: {
-                    if isPublicBetaBuild {
-                        Image(systemName: "crown.fill")
-                            .foregroundStyle(.yellow)
-                    } else {
-                        Label(isEditingCards ? "Done" : "Edit Cards",
-                              systemImage: isEditingCards ? "checkmark" : "square.grid.2x2")
-                    }
+                }                 label: {
+                    Label(isEditingCards ? "Done" : "Edit Cards",
+                          systemImage: isEditingCards ? "checkmark" : "square.grid.2x2")
                 }
-                .disabled(!canEditCardWidgets)
-                .help(isPublicBetaBuild
-                      ? (canEditCardWidgets ? "MSC+ card editor" : "MSC+ card editor — Em Community Basic members")
-                      : (isEditingCards ? "Finish editing cards" : "Edit player cards"))
+                .help(isEditingCards ? "Finish editing cards" : "Edit player cards")
                 // Right-clicking Edit Cards offers Add Cards (reveals +).
                 .contextMenu {
                     Button("Add Cards…", systemImage: "plus") { onOpenGallery?() }

@@ -93,12 +93,6 @@ public final class AppSettings: Codable {
     public var useSystemAccent: Bool = true
     public var customAccentHex: String = "#2E7D32"
 
-    // Patreon supporter gate (Beta builds)
-    public var patreonSupporterEmail: String?
-    public var patreonVerifiedUntil: Date?
-    public var patreonHasEAFPlus: Bool = false
-    public var patreonHasEAFBasic: Bool = false
-
     /// Last app version that showed the What's New splash. Nil = never shown.
     public var lastSeenVersion: String?
 
@@ -115,7 +109,6 @@ public final class AppSettings: Codable {
         case lastScrubberEQEnabled, lastScrubberLowGain, lastScrubberMidGain, lastScrubberHighGain
         case lastLimiterEnabled, lastLimiterInputGain
         case useSystemAccent, customAccentHex
-        case patreonSupporterEmail, patreonVerifiedUntil, patreonHasEAFPlus, patreonHasEAFBasic
         case lastSeenVersion
     }
 
@@ -183,10 +176,6 @@ public final class AppSettings: Codable {
         lastLimiterInputGain = try c.decodeIfPresent(Float.self, forKey: .lastLimiterInputGain) ?? 0
         useSystemAccent = try c.decodeIfPresent(Bool.self, forKey: .useSystemAccent) ?? true
         customAccentHex = try c.decodeIfPresent(String.self, forKey: .customAccentHex) ?? "#2E7D32"
-        patreonSupporterEmail = try c.decodeIfPresent(String.self, forKey: .patreonSupporterEmail)
-        patreonVerifiedUntil = try c.decodeIfPresent(Date.self, forKey: .patreonVerifiedUntil)
-        patreonHasEAFPlus = try c.decodeIfPresent(Bool.self, forKey: .patreonHasEAFPlus) ?? false
-        patreonHasEAFBasic = try c.decodeIfPresent(Bool.self, forKey: .patreonHasEAFBasic) ?? false
         lastSeenVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenVersion)
         clamp()
     }

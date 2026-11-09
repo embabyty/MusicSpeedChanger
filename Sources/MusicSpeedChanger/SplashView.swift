@@ -2,9 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Apple-styled What's New splash: Liquid Glass card, app icon, and the new
-/// features in this update. Shown once per app version after an update —
-/// the user continues past it into the Patreon gate (beta) or the main
-/// window (stable).
+/// features in this update. Shown once per app version after an update.
 struct SplashView: View {
     var version: String?
     var notes: [String] = []
@@ -75,9 +73,6 @@ struct SplashView: View {
                     .controlSize(.large)
                     .padding(.top, 4)
                 Spacer()
-                Text("Beta builds are an EAF+ perk · patreon.com/EmAppleFlagship")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
             .padding(40)
         }

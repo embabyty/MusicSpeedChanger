@@ -3,6 +3,20 @@ import Foundation
 /// Lenient semantic-version comparison for release tags.
 /// Handles `1.0`, `v1.0.0`, and prerelease suffixes such as `1.0.0-devbeta.1`:
 /// a version with a prerelease suffix is older than the same core without one.
+/// Release channel derived from a version or tag string.
+public enum ReleaseChannel: Sendable {
+    case stable
+    case devbeta
+    case publicbeta
+
+    public static func of(_ versionOrTag: String) -> ReleaseChannel {
+        let v = versionOrTag.lowercased()
+        if v.contains("publicbeta") { return .publicbeta }
+        if v.contains("beta") { return .devbeta }
+        return .stable
+    }
+}
+
 public enum AppVersion {
     /// Strips leading `v`s (`v1.0.0` → `1.0.0`). Leading-only on purpose:
     /// `trimmingCharacters` would also eat a meaningful trailing `v`.

@@ -7,8 +7,6 @@ struct MusicSpeedChangerApp: App {
     @StateObject private var tracks = TrackList()
     @StateObject private var settings = SettingsStore()
     @StateObject private var discord = DiscordPresenceController()
-    @StateObject private var patreon = PatreonAuth()
-    @State private var gatePassed = false
     @State private var showWhatsNew: Bool = {
         WhatsNew.shouldShow(current: UpdateChecker.currentVersion,
                             lastSeen: AppSettings.load().lastSeenVersion)
@@ -28,21 +26,11 @@ struct MusicSpeedChangerApp: App {
                         settings.persist()
                         showWhatsNew = false
                     }
-                } else if PatreonAuth.gateRequired, !gatePassed {
-                    PatreonGateView(auth: patreon) {
-                        gatePassed = true
-                    }
-                    .onAppear {
-                        if patreon.restoreCached() {
-                            gatePassed = true
-                        }
-                    }
                 } else {
                     ContentView()
                         .environmentObject(engine)
                         .environmentObject(tracks)
                         .environmentObject(settings)
-                        .environmentObject(patreon)
                         .preferredColorScheme(.dark)
                         .frame(minWidth: 900, minHeight: 720)
                         .onAppear {
@@ -76,7 +64,6 @@ struct MusicSpeedChangerApp: App {
         Settings {
             SettingsView()
                 .environmentObject(settings)
-                .environmentObject(patreon)
                 .preferredColorScheme(.dark)
         }
     }

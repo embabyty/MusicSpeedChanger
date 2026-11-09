@@ -16,20 +16,20 @@ public enum WhatsNew {
         let lower = v.lowercased()
         if lower.contains("publicbeta") {
             return [
-                "Public beta channel — EAF Basic members and higher",
+                "Public beta channel — free, no sign-in",
                 "Early access to upcoming features before stable",
                 "Thanks for helping test — report issues on GitHub",
             ]
         }
         let isBeta = lower.contains("beta")
         if isBeta {
-            // Beta 3 introduced the EAF+ gate + splash; earlier betas had the
+            // Beta 3 introduced the splash; earlier betas had the
             // card/icon/loop refresh.
             if AppVersion.compare(v, "1.0.1-devbeta.3") != .orderedAscending {
                 return [
-                    "Supporter-only betas — sign in with Patreon (EAF+ tier) to continue",
+                    "Developer betas are free — no sign-in required",
                     "New Liquid Glass splash and What's New screen",
-                    "Devbeta updates now require EAF+ verification in Settings",
+                    "Opt in to beta updates from Settings",
                 ]
             }
             return [
