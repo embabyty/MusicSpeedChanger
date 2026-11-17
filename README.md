@@ -4,8 +4,7 @@
 
 A macOS desktop version of the Music Speed Changer mobile app — slow down / speed up
 music **without changing pitch**, and shift key **without changing tempo**. Built for
-musicians practicing tricky sections. Same layout and feature set as the
-[Windows version](https://github.com/embabyty/MusicSpeedChanger), rebuilt with
+musicians practicing tricky sections. Same layout and feature set as the former Windows version, rebuilt with
 SwiftUI in the Liquid Glass style of macOS 26.
 
 ## Features
