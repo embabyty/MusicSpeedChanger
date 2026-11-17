@@ -1,6 +1,6 @@
 # MusicSpeedChanger (macOS)
 
-![MusicSpeedChanger logo](Resources/MusicSpeed.png)
+![MusicSpeedChanger app icon](Resources/AppIcon.png)
 
 A macOS desktop version of the Music Speed Changer mobile app — slow down / speed up
 music **without changing pitch**, and shift key **without changing tempo**. Built for
